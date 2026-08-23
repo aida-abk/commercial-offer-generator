@@ -1,0 +1,169 @@
+{
+  "rounding": {
+    "cableMeters": 50,
+    "conduitMeters": 50,
+    "countItems": 5
+  },
+  "formulas": {
+    "cable3x1.5": {
+      "base": 80,
+      "perSwitch": 5,
+      "perLight": 8,
+      "perAreaSqM": 1.2
+    },
+    "cable3x2.5": {
+      "base": 120,
+      "perOutlet": 3.2,
+      "perAreaSqM": 0.9
+    },
+    "cable3x6": {
+      "base": 10,
+      "perWarmFloor": 4,
+      "fixed": 12
+    },
+    "cableUtp": {
+      "base": 20,
+      "perUtpPoint": 6,
+      "perAreaSqM": 0.2
+    },
+    "wirePugnp": {
+      "base": 20,
+      "perLight": 1.5
+    },
+    "conduitPvc": {
+      "ratioOfTotalCable": 0.72
+    },
+    "socketBoxes": {
+      "perOutlet": 1,
+      "perSwitch": 1,
+      "buffer": 3
+    },
+    "junctionBoxes": {
+      "base": 6,
+      "perAreaSqM": 0.12
+    },
+    "clips": {
+      "perConduitMeter": 0.035,
+      "minPacks": 12
+    },
+    "nails": {
+      "perAreaSqM": 0.015,
+      "minPacks": 1,
+      "maxPacks": 3
+    },
+    "cableTies": {
+      "perAreaSqM": 0.03,
+      "minPacks": 2
+    },
+    "sleeves": {
+      "gml4": {
+        "perBox": 1.5,
+        "min": 35
+      },
+      "gml6": {
+        "perBox": 1.2,
+        "min": 30
+      },
+      "gml10": {
+        "perBox": 0.8,
+        "min": 20
+      },
+      "gml16": {
+        "perBox": 0.8,
+        "min": 18
+      }
+    },
+    "bulbs": {
+      "perLight": 1,
+      "min": 10
+    },
+    "trashBags": {
+      "perAreaSqM": 0.08,
+      "min": 8
+    },
+    "tape": {
+      "perAreaSqM": 0.04,
+      "min": 4
+    },
+    "breakers10a": {
+      "perLightGroup": 0.8,
+      "base": 2
+    },
+    "breakers16a": {
+      "perOutletGroup": 1.2,
+      "base": 5
+    },
+    "breakers32a": {
+      "fixed": 1
+    },
+    "breakers50a": {
+      "fixed": 1
+    },
+    "rcd": {
+      "perAreaSqM": 0.025,
+      "min": 2,
+      "max": 3
+    },
+    "panelSize": {
+      "thresholds": [
+        {
+          "maxPoints": 55,
+          "panelId": "panel-48"
+        },
+        {
+          "maxPoints": 75,
+          "panelId": "panel-54"
+        },
+        {
+          "maxPoints": 999,
+          "panelId": "panel-72"
+        }
+      ]
+    }
+  },
+  "laborTiers": [
+    {
+      "maxAreaSqM": 72,
+      "price": 390000
+    },
+    {
+      "maxAreaSqM": 92,
+      "price": 450000
+    },
+    {
+      "maxAreaSqM": 98,
+      "price": 500000
+    },
+    {
+      "maxAreaSqM": 108,
+      "price": 600000
+    },
+    {
+      "maxAreaSqM": 125,
+      "price": 800000
+    },
+    {
+      "maxAreaSqM": 999,
+      "price": 1000000
+    }
+  ],
+  "fixedItems": {
+    "contactor": 1,
+    "voltageRelay": 1,
+    "coreBit": 1,
+    "discStone": 2,
+    "dowelClamp": 2,
+    "rotband": 1,
+    "socketDouble": 2,
+    "cableLabel": 2,
+    "pugv4Red": 7,
+    "pugv4Blue": 8,
+    "neutralBus": 2,
+    "cableTie4x150": 3,
+    "nshvi": 1,
+    "padSelfAdhesive": 1,
+    "terminalRed": 2,
+    "terminalBlue": 2
+  },
+  "includeConduitPnd": false
+}
