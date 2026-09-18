@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { formatTenge } from "@/lib/format";
-import type { ExtractedProject } from "@/lib/types";
+import type { DedicatedCircuits, ExtractedProject } from "@/lib/types";
 
 interface ExtractSummary {
   projectName: string;
@@ -21,8 +21,19 @@ const emptyManual: ExtractedProject = {
   lightPoints: 13,
   utpPoints: 4,
   warmFloorCircuits: 0,
+  dedicatedCircuits: {},
   notes: [],
 };
+
+/** Потребители со своей группой: все на кабеле 3*2,5, варочная поверхность — на 3*6. */
+const DEDICATED_FIELDS: { key: keyof DedicatedCircuits; label: string; hint: string }[] = [
+  { key: "fridge", label: "Холодильник", hint: "3*2,5" },
+  { key: "freezer", label: "Морозильник", hint: "3*2,5" },
+  { key: "airConditioners", label: "Кондиционеры", hint: "по группе на каждый" },
+  { key: "hob", label: "Варочная поверхность", hint: "3*6" },
+  { key: "ovenMicrowave", label: "Духовой шкаф + СВЧ", hint: "одна группа" },
+  { key: "warmFloor", label: "Тёплый пол", hint: "3*2,5" },
+];
 
 export default function HomePage() {
   const router = useRouter();
@@ -142,7 +153,6 @@ export default function HomePage() {
                 ["switches", "Выключатели"],
                 ["lightPoints", "Точки света"],
                 ["utpPoints", "UTP / интернет"],
-                ["warmFloorCircuits", "Контуры тёплого пола"],
               ] as const
             ).map(([key, label]) => (
               <label key={key} className="block">
@@ -156,6 +166,54 @@ export default function HomePage() {
                 />
               </label>
             ))}
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Высота потолка, м</span>
+              <input
+                type="number"
+                min={0}
+                step={0.05}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={manual.ceilingHeightMeters ?? ""}
+                placeholder="2,7"
+                onChange={(e) =>
+                  setManual({
+                    ...manual,
+                    ceilingHeightMeters: Number(e.target.value) || undefined,
+                  })
+                }
+              />
+            </label>
+
+            <div className="sm:col-span-2">
+              <p className="text-sm font-medium text-slate-700">Отдельные группы</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Каждый такой потребитель получает свой автомат. Розетки этой техники
+                указывайте и в общем числе розеток — система не посчитает их дважды.
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                {DEDICATED_FIELDS.map(({ key, label, hint }) => (
+                  <label key={key} className="block">
+                    <span className="text-sm text-slate-700">{label}</span>
+                    <span className="ml-1 text-xs text-slate-400">{hint}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      value={manual.dedicatedCircuits?.[key] ?? 0}
+                      onChange={(e) =>
+                        setManual({
+                          ...manual,
+                          dedicatedCircuits: {
+                            ...manual.dedicatedCircuits,
+                            [key]: Number(e.target.value) || 0,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
         )}
         <button
