@@ -2,7 +2,8 @@
   "rounding": {
     "cableMeters": 50,
     "conduitMeters": 50,
-    "countItems": 5
+    "countItems": 5,
+    "cable6Meters": 5
   },
   "formulas": {
     "cable3x1.5": {
@@ -17,9 +18,10 @@
       "perAreaSqM": 0.9
     },
     "cable3x6": {
-      "base": 10,
-      "perWarmFloor": 4,
-      "fixed": 12
+      "comment": "Кабель 3*6 идёт только на варочную поверхность. Тёплый пол переведён в группы на 3*2,5.",
+      "base": 0,
+      "perWarmFloor": 0,
+      "fixed": 0
     },
     "cableUtp": {
       "base": 20,
@@ -34,13 +36,17 @@
       "ratioOfTotalCable": 0.72
     },
     "socketBoxes": {
+      "comment": "Подрозетников ровно столько, сколько всех выключателей, розеток и розеток UTP.",
       "perOutlet": 1,
       "perSwitch": 1,
-      "buffer": 3
+      "perUtpPoint": 1,
+      "buffer": 0
     },
     "junctionBoxes": {
+      "comment": "В каждом помещении своя распределительная коробка; perRoom задаёт нижнюю границу.",
       "base": 6,
-      "perAreaSqM": 0.12
+      "perAreaSqM": 0.12,
+      "perRoom": 1
     },
     "clips": {
       "perConduitMeter": 0.035,
@@ -86,15 +92,18 @@
       "min": 4
     },
     "breakers10a": {
-      "perLightGroup": 0.8,
-      "base": 2
+      "comment": "Группы освещения.",
+      "perLightGroup": 1,
+      "base": 4
     },
     "breakers16a": {
-      "perOutletGroup": 1.2,
-      "base": 5
+      "comment": "Общие розеточные группы. Холодильник, морозильник, кондиционеры и духовой шкаф со СВЧ добавляются отдельно из dedicatedCircuits, поэтому база здесь ниже прежней.",
+      "perOutletGroup": 1,
+      "base": 2
     },
     "breakers32a": {
-      "fixed": 1
+      "comment": "Ставится варочной поверхностью через dedicatedCircuits, фиксированного автомата тут больше нет.",
+      "fixed": 0
     },
     "breakers50a": {
       "fixed": 1
@@ -165,5 +174,32 @@
     "terminalRed": 2,
     "terminalBlue": 2
   },
-  "includeConduitPnd": false
+  "includeConduitPnd": false,
+  "cableRouting": {
+    "comment": "Кабель замеряется от щита по дальней траектории: по потолку, вдоль стен до распределительной коробки помещения, затем спуск к точке, дальше до следующей точки и снова спуск. Трасса идёт только по двум осям, по диагонали кабель не прокладывается.",
+    "enabled": true,
+    "defaultDropMeters": 3,
+    "lightDropMeters": 0.5,
+    "defaultRoomAreaSqM": 18,
+    "minRooms": 3,
+    "pointsForFullLap": 4,
+    "defaultCeilingHeightMeters": 2.7,
+    "panelToRoomMinMeters": 5,
+    "panelToRoomMaxMeters": 25,
+    "wasteFactor": 1.1,
+    "utpHomeRun": true
+  },
+  "dedicatedCircuits": {
+    "comment": "Потребители со своей группой. Все на кабеле ВВГнг 3*2,5, кроме варочной поверхности — она на 3*6.",
+    "standardAmps": 16,
+    "hobAmps": 32,
+    "labels": {
+      "fridge": "Холодильник",
+      "freezer": "Морозильник",
+      "airConditioners": "Кондиционер",
+      "hob": "Варочная поверхность",
+      "ovenMicrowave": "Духовой шкаф + СВЧ",
+      "warmFloor": "Тёплый пол"
+    }
+  }
 }

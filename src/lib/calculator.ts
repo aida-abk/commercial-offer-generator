@@ -1,10 +1,50 @@
+import {
+  estimateCableRoute,
+  listDedicatedCircuits,
+  outletBackedDedicatedCount,
+  resolveDedicatedCircuits,
+} from "./cable-routing";
 import { findCatalogItem, loadCalculationRules, loadPriceCatalog } from "./catalog";
-import type { CalculationResult, ExtractedProject, LineItem } from "./types";
+import type {
+  CableRouteEstimate,
+  CableRoutingRules,
+  CalculationResult,
+  DedicatedCircuitRules,
+  ExtractedProject,
+  LineItem,
+} from "./types";
 
 export function roundTo(value: number, step: number): number {
   if (step <= 0) return Math.round(value);
   return Math.ceil(value / step) * step;
 }
+
+const DEFAULT_ROUTING: CableRoutingRules = {
+  enabled: true,
+  defaultDropMeters: 3,
+  lightDropMeters: 0.5,
+  defaultRoomAreaSqM: 18,
+  minRooms: 3,
+  pointsForFullLap: 4,
+  defaultCeilingHeightMeters: 2.7,
+  panelToRoomMinMeters: 5,
+  panelToRoomMaxMeters: 25,
+  wasteFactor: 1.1,
+  utpHomeRun: true,
+};
+
+const DEFAULT_DEDICATED: DedicatedCircuitRules = {
+  standardAmps: 16,
+  hobAmps: 32,
+  labels: {
+    fridge: "Холодильник",
+    freezer: "Морозильник",
+    airConditioners: "Кондиционер",
+    hob: "Варочная поверхность",
+    ovenMicrowave: "Духовой шкаф + СВЧ",
+    warmFloor: "Тёплый пол",
+  },
+};
 
 function lineFromCatalog(
   section: "materials" | "panel",
@@ -74,10 +114,17 @@ function computeQuantities(project: ExtractedProject) {
   const wirePugnpRaw =
     num(f.wirePugnp, "base") + num(f.wirePugnp, "perLight") * lights;
 
-  const cable15 = roundTo(cable15Raw, r.cableMeters);
-  const cable25 = roundTo(cable25Raw, r.cableMeters);
-  const cable6 = roundTo(cable6Raw, r.cableMeters);
-  const cableUtp = roundTo(cableUtpRaw, r.cableMeters);
+  const routingRules = rules.cableRouting ?? DEFAULT_ROUTING;
+  const dedicatedRules = rules.dedicatedCircuits ?? DEFAULT_DEDICATED;
+  const cableRoute: CableRouteEstimate | undefined = routingRules.enabled
+    ? estimateCableRoute(project, routingRules, dedicatedRules.labels)
+    : undefined;
+
+  const cable15 = roundTo(cableRoute?.cable15 ?? cable15Raw, r.cableMeters);
+  const cable25 = roundTo(cableRoute?.cable25 ?? cable25Raw, r.cableMeters);
+  // Кабель 3*6 идёт только на варочную поверхность, там десятки метров, а не сотни.
+  const cable6 = roundTo(cableRoute?.cable6 ?? cable6Raw, r.cable6Meters ?? r.cableMeters);
+  const cableUtp = roundTo(cableRoute?.cableUtp ?? cableUtpRaw, r.cableMeters);
   const wirePugnp = roundTo(wirePugnpRaw, r.cableMeters);
 
   const totalCable = cable15 + cable25 + cable6 + cableUtp + wirePugnp;
@@ -85,14 +132,19 @@ function computeQuantities(project: ExtractedProject) {
   const conduitPvc = roundTo(totalCable * conduitRatio, r.conduitMeters);
   const conduitPnd = roundTo(totalCable * 0.35, r.conduitMeters);
 
-  const socketBoxesRaw =
+  // Подрозетников ровно столько, сколько всех выключателей, розеток и розеток UTP.
+  const socketBoxes =
     num(f.socketBoxes, "perOutlet") * outlets +
     num(f.socketBoxes, "perSwitch") * switches +
+    num(f.socketBoxes, "perUtpPoint") * utp +
     num(f.socketBoxes, "buffer");
-  const socketBoxes = roundTo(socketBoxesRaw, r.countItems);
 
-  const junctionBoxesRaw =
-    num(f.junctionBoxes, "base") + num(f.junctionBoxes, "perAreaSqM") * area;
+  // В каждом помещении своя распределительная коробка — это нижняя граница.
+  const roomCount = project.rooms?.length ?? 0;
+  const junctionBoxesRaw = Math.max(
+    num(f.junctionBoxes, "base") + num(f.junctionBoxes, "perAreaSqM") * area,
+    num(f.junctionBoxes, "perRoom") * roomCount,
+  );
   const junctionBoxes = roundTo(junctionBoxesRaw, r.countItems);
 
   const clipsRaw = num(f.clips, "perConduitMeter") * conduitPvc;
@@ -141,8 +193,14 @@ function computeQuantities(project: ExtractedProject) {
     num(f.tape, "min"),
   );
 
+  const dedicated = resolveDedicatedCircuits(project);
+  const dedicatedRows = listDedicatedCircuits(dedicated, dedicatedRules.labels);
+  // Розетки выделенных потребителей уже получают свои автоматы, поэтому
+  // в общие розеточные группы они второй раз не попадают.
+  const genericOutlets = Math.max(0, outlets - outletBackedDedicatedCount(dedicated));
+
   const lightGroups = Math.max(1, Math.ceil(lights / 8));
-  const outletGroups = Math.max(1, Math.ceil(outlets / 6));
+  const outletGroups = Math.max(1, Math.ceil(genericOutlets / 6));
 
   let breakers10 = num(f.breakers10a, "base") + num(f.breakers10a, "perLightGroup") * lightGroups;
   let breakers16 = num(f.breakers16a, "base") + num(f.breakers16a, "perOutletGroup") * outletGroups;
@@ -162,10 +220,18 @@ function computeQuantities(project: ExtractedProject) {
     }
   }
 
-  breakers10 = roundTo(breakers10, 1);
-  breakers16 = roundTo(breakers16, 1);
-  breakers32 = roundTo(breakers32, 1);
-  breakers50 = roundTo(breakers50, 1);
+  // Холодильник, морозильник, каждый кондиционер, варочная поверхность,
+  // духовой шкаф со СВЧ и тёплый пол требуют своего автомата.
+  const dedicatedAmpCounts = { 10: 0, 16: 0, 32: 0, 50: 0 };
+  for (const row of dedicatedRows) {
+    const amps = row.cable6 ? dedicatedRules.hobAmps : dedicatedRules.standardAmps;
+    dedicatedAmpCounts[amps] += row.count;
+  }
+
+  breakers10 = roundTo(breakers10, 1) + dedicatedAmpCounts[10];
+  breakers16 = roundTo(breakers16, 1) + dedicatedAmpCounts[16];
+  breakers32 = roundTo(breakers32, 1) + dedicatedAmpCounts[32];
+  breakers50 = roundTo(breakers50, 1) + dedicatedAmpCounts[50];
 
   const rcdRaw = num(f.rcd, "perAreaSqM") * area;
   let rcdCount = Math.round(rcdRaw);
@@ -216,6 +282,8 @@ function computeQuantities(project: ExtractedProject) {
     rcdCount,
     panelId,
     fixed,
+    cableRoute,
+    dedicatedRows,
   };
 }
 
@@ -320,5 +388,5 @@ export function calculateOffer(
     0,
   );
 
-  return { labor, materials, panel, grandTotal, laborPrice };
+  return { labor, materials, panel, grandTotal, laborPrice, cableRoute: q.cableRoute };
 }
