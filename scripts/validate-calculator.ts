@@ -31,10 +31,11 @@ const fixtures: { name: string; project: ExtractedProject; expectedTotal?: numbe
 
 for (const f of fixtures) {
   const result = calculateOffer(f.project);
+  const mat = result.materials.reduce((s, i) => s + i.total, 0);
   const diff = f.expectedTotal ? Math.abs(result.grandTotal - f.expectedTotal) / f.expectedTotal : 0;
   const pct = (diff * 100).toFixed(1);
   const ok = !f.expectedTotal || diff <= 0.15;
-  console.log(`${ok ? "✓" : "✗"} ${f.name}: ${result.grandTotal.toLocaleString("ru-RU")} ₸ (labor ${result.laborPrice.toLocaleString("ru-RU")})${f.expectedTotal ? ` — expected ~${f.expectedTotal.toLocaleString("ru-RU")}, diff ${pct}%` : ""}`);
+  console.log(`${ok ? "✓" : "✗"} ${f.name}: ${result.grandTotal.toLocaleString("ru-RU")} ₸ (labor ${result.laborPrice.toLocaleString("ru-RU")}, materials ${mat.toLocaleString("ru-RU")})${f.expectedTotal ? ` — expected ~${f.expectedTotal.toLocaleString("ru-RU")}, diff ${pct}%` : ""}`);
 }
 
 /**

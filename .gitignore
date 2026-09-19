@@ -5,3 +5,10 @@ dev.db
 *.log
 .DS_Store
 app.root-placeholder.bak/
+
+# локальные тестовые файлы и артефакты прогонов
+/*.pdf
+/*.jpeg
+/*.arr
+/etc/
+scripts/benchmark-last-run.txt

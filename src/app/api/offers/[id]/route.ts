@@ -29,6 +29,8 @@ export async function PATCH(request: Request, context: RouteContext) {
       clientName?: string;
       laborPrice?: number;
       lineItems?: OfferSections;
+      brandVariants?: import("@/lib/types").BrandVariants;
+      activeBrand?: import("@/lib/types").PanelBrandId;
       totalAmount?: number;
     };
     const offer = await updateOffer(id, body);

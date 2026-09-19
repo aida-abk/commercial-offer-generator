@@ -9,8 +9,10 @@
     "lint": "next lint",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
-    "postinstall": "prisma generate",
-    "validate": "tsx scripts/validate-calculator.ts"
+    "postinstall": "prisma generate && node scripts/ensure-chrome.mjs || true",
+    "validate": "tsx scripts/validate-calculator.ts",
+    "benchmark": "tsx scripts/benchmark-kp-examples.ts",
+    "compare:sofia": "tsx scripts/compare-sofia.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",

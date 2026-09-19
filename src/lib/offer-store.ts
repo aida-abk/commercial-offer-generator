@@ -1,7 +1,27 @@
 import { Prisma } from "@prisma/client";
+import {
+  calculateAllVariants,
+  recalculateVariantTotals,
+  sectionsForBrand,
+} from "./calculator";
 import { prisma } from "./db";
-import { calculateOffer } from "./calculator";
-import type { ExtractedProject, OfferRecord, OfferSections } from "./types";
+import type {
+  AnalyzedPdfPage,
+  BrandVariants,
+  ExtractedProject,
+  OfferRecord,
+  OfferSections,
+  PanelBrandId,
+} from "./types";
+import { PANEL_BRAND_IDS } from "./types";
+
+function emptyVariants(): BrandVariants {
+  return {
+    "schneider-easy9": { panel: [], totalAmount: 0 },
+    chint: { panel: [], totalAmount: 0 },
+    legrand: { panel: [], totalAmount: 0 },
+  };
+}
 
 function toOfferSections(lineItems: unknown): OfferSections {
   const data = lineItems as OfferSections;
@@ -12,6 +32,25 @@ function toOfferSections(lineItems: unknown): OfferSections {
   };
 }
 
+function toBrandVariants(raw: unknown): BrandVariants {
+  if (!raw || typeof raw !== "object") return emptyVariants();
+  const data = raw as BrandVariants;
+  const result = emptyVariants();
+  for (const id of PANEL_BRAND_IDS) {
+    if (data[id]) {
+      result[id] = {
+        panel: Array.isArray(data[id].panel) ? data[id].panel : [],
+        totalAmount: Number(data[id].totalAmount) || 0,
+      };
+    }
+  }
+  return result;
+}
+
+function toAnalyzedPages(raw: unknown): AnalyzedPdfPage[] {
+  return Array.isArray(raw) ? (raw as AnalyzedPdfPage[]) : [];
+}
+
 function mapOffer(row: {
   id: string;
   projectName: string;
@@ -20,10 +59,23 @@ function mapOffer(row: {
   extractedData: unknown;
   laborPrice: number;
   lineItems: unknown;
+  brandVariants: unknown;
+  activeBrand: string;
+  analyzedPages: unknown;
   totalAmount: number;
   createdAt: Date;
   updatedAt: Date;
 }): OfferRecord {
+  const brandVariants = toBrandVariants(row.brandVariants);
+  const activeBrand = (PANEL_BRAND_IDS.includes(row.activeBrand as PanelBrandId)
+    ? row.activeBrand
+    : "schneider-easy9") as PanelBrandId;
+  const lineItems = toOfferSections(row.lineItems);
+
+  if (lineItems.panel.length === 0 && brandVariants[activeBrand].panel.length > 0) {
+    lineItems.panel = brandVariants[activeBrand].panel;
+  }
+
   return {
     id: row.id,
     projectName: row.projectName,
@@ -31,7 +83,10 @@ function mapOffer(row: {
     sourceFileName: row.sourceFileName,
     extractedData: row.extractedData as ExtractedProject,
     laborPrice: row.laborPrice,
-    lineItems: toOfferSections(row.lineItems),
+    lineItems,
+    brandVariants,
+    activeBrand,
+    analyzedPages: toAnalyzedPages(row.analyzedPages),
     totalAmount: row.totalAmount,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -44,15 +99,19 @@ export interface CreateOfferInput {
   sourceFileName?: string;
   extractedData: ExtractedProject;
   laborOverride?: number;
+  analyzedPages?: AnalyzedPdfPage[];
+  activeBrand?: PanelBrandId;
 }
 
 export async function createOffer(input: CreateOfferInput): Promise<OfferRecord> {
-  const calc = calculateOffer(input.extractedData, input.laborOverride);
-  const lineItems: OfferSections = {
-    labor: calc.labor,
-    materials: calc.materials,
-    panel: calc.panel,
-  };
+  const calc = calculateAllVariants(input.extractedData, input.laborOverride);
+  const activeBrand = input.activeBrand ?? "schneider-easy9";
+  const lineItems = sectionsForBrand(
+    calc.labor,
+    calc.materials,
+    calc.variants,
+    activeBrand,
+  );
 
   const row = await prisma.offer.create({
     data: {
@@ -62,7 +121,10 @@ export async function createOffer(input: CreateOfferInput): Promise<OfferRecord>
       extractedData: input.extractedData as unknown as Prisma.InputJsonValue,
       laborPrice: calc.laborPrice,
       lineItems: lineItems as unknown as Prisma.InputJsonValue,
-      totalAmount: calc.grandTotal,
+      brandVariants: calc.variants as unknown as Prisma.InputJsonValue,
+      activeBrand,
+      analyzedPages: (input.analyzedPages ?? []) as unknown as Prisma.InputJsonValue,
+      totalAmount: calc.variants[activeBrand].totalAmount,
     },
   });
 
@@ -88,6 +150,9 @@ export interface UpdateOfferInput {
   extractedData?: ExtractedProject;
   laborPrice?: number;
   lineItems?: OfferSections;
+  brandVariants?: BrandVariants;
+  activeBrand?: PanelBrandId;
+  analyzedPages?: AnalyzedPdfPage[];
   totalAmount?: number;
 }
 
@@ -100,28 +165,53 @@ export async function updateOffer(
 
   const extracted = (input.extractedData ??
     existing.extractedData) as ExtractedProject;
+  const activeBrand = (input.activeBrand ??
+    existing.activeBrand ??
+    "schneider-easy9") as PanelBrandId;
   const laborPrice =
     input.laborPrice ??
     existing.laborPrice ??
-    calculateOffer(extracted).laborPrice;
+    calculateAllVariants(extracted).laborPrice;
 
   let lineItems = input.lineItems ?? toOfferSections(existing.lineItems);
-  let totalAmount = input.totalAmount;
+  let brandVariants = input.brandVariants ?? toBrandVariants(existing.brandVariants);
 
-  if (input.extractedData && !input.lineItems) {
-    const calc = calculateOffer(extracted, laborPrice);
-    lineItems = {
-      labor: calc.labor,
-      materials: calc.materials,
-      panel: calc.panel,
-    };
-    totalAmount = calc.grandTotal;
-  } else if (totalAmount === undefined) {
-    totalAmount = [...lineItems.labor, ...lineItems.materials, ...lineItems.panel].reduce(
+  if (input.extractedData && !input.lineItems && !input.brandVariants) {
+    const calc = calculateAllVariants(extracted, laborPrice);
+    brandVariants = calc.variants;
+    lineItems = sectionsForBrand(calc.labor, calc.materials, brandVariants, activeBrand);
+  } else if (input.lineItems || input.brandVariants) {
+    if (input.lineItems) {
+      brandVariants = recalculateVariantTotals(
+        lineItems.labor,
+        lineItems.materials,
+        brandVariants,
+      );
+      if (input.lineItems.panel.length > 0) {
+        brandVariants[activeBrand] = {
+          panel: input.lineItems.panel,
+          totalAmount:
+            lineItems.labor.reduce((s, i) => s + i.total, 0) +
+            lineItems.materials.reduce((s, i) => s + i.total, 0) +
+            input.lineItems.panel.reduce((s, i) => s + i.total, 0),
+        };
+      }
+    }
+    lineItems = sectionsForBrand(
+      lineItems.labor,
+      lineItems.materials,
+      brandVariants,
+      activeBrand,
+    );
+  }
+
+  const totalAmount =
+    input.totalAmount ??
+    brandVariants[activeBrand]?.totalAmount ??
+    [...lineItems.labor, ...lineItems.materials, ...lineItems.panel].reduce(
       (sum, item) => sum + item.total,
       0,
     );
-  }
 
   const row = await prisma.offer.update({
     where: { id },
@@ -131,7 +221,11 @@ export async function updateOffer(
       extractedData: extracted as unknown as Prisma.InputJsonValue,
       laborPrice,
       lineItems: lineItems as unknown as Prisma.InputJsonValue,
-      totalAmount: totalAmount ?? existing.totalAmount,
+      brandVariants: brandVariants as unknown as Prisma.InputJsonValue,
+      activeBrand,
+      analyzedPages: (input.analyzedPages ??
+        toAnalyzedPages(existing.analyzedPages)) as unknown as Prisma.InputJsonValue,
+      totalAmount,
     },
   });
 
@@ -153,5 +247,6 @@ export async function recalculateOffer(id: string): Promise<OfferRecord | null> 
   return updateOffer(id, {
     extractedData: existing.extractedData,
     laborPrice: existing.laborPrice,
+    activeBrand: existing.activeBrand,
   });
 }

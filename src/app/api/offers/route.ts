@@ -23,6 +23,7 @@ export async function POST(request: Request) {
       sourceFileName?: string;
       extractedData: ExtractedProject;
       laborOverride?: number;
+      analyzedPages?: import("@/lib/types").AnalyzedPdfPage[];
     };
     if (!body.extractedData) {
       return NextResponse.json({ error: "extractedData обязателен" }, { status: 400 });
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
       sourceFileName: body.sourceFileName,
       extractedData: body.extractedData,
       laborOverride: body.laborOverride,
+      analyzedPages: body.analyzedPages,
     });
     return NextResponse.json(serializeOffer(offer), { status: 201 });
   } catch (err) {

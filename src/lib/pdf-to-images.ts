@@ -11,6 +11,7 @@ export interface PdfPageImage {
 export interface PdfToImagesOptions {
   maxPages?: number;
   scale?: number;
+  pageNumbers?: number[];
 }
 
 type CanvasModule = {
@@ -56,11 +57,19 @@ async function renderWithPdfJs(
   const data = new Uint8Array(pdfBuffer);
   const loadingTask = pdfjs.getDocument({ data, useSystemFonts: true });
   const pdf = await loadingTask.promise;
-  const maxPages = Math.min(options.maxPages ?? 15, pdf.numPages);
   const scale = options.scale ?? 2;
+
+  const pagesToRender =
+    options.pageNumbers?.length && options.pageNumbers.length > 0
+      ? options.pageNumbers.filter((n) => n >= 1 && n <= pdf.numPages)
+      : Array.from(
+          { length: Math.min(options.maxPages ?? 15, pdf.numPages) },
+          (_, i) => i + 1,
+        );
+
   const images: PdfPageImage[] = [];
 
-  for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+  for (const pageNumber of pagesToRender) {
     const page = await pdf.getPage(pageNumber);
     const viewport = page.getViewport({ scale });
     const canvas = canvasLib.createCanvas(viewport.width, viewport.height);
@@ -86,11 +95,8 @@ async function renderWithPuppeteer(
   pdfBuffer: Buffer,
   options: PdfToImagesOptions,
 ): Promise<PdfPageImage[]> {
-  const puppeteer = await import("puppeteer");
-  const browser = await puppeteer.default.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+  const { launchBrowser } = await import("./puppeteer-browser");
+  const browser = await launchBrowser();
 
   try {
     const page = await browser.newPage();
@@ -128,10 +134,6 @@ export async function pdfBufferToImages(
   }
 }
 
-export function selectRelevantPages(
-  images: PdfPageImage[],
-  _keywords: string[] = ["РОЗЕТКИ", "СВЕТ", "ВЫКЛ", "электр", "ELECTRIC"],
-): PdfPageImage[] {
-  if (images.length <= 8) return images;
-  return images.slice(0, Math.min(12, images.length));
+export function selectRelevantPages(images: PdfPageImage[]): PdfPageImage[] {
+  return images;
 }
