@@ -29,6 +29,10 @@ export function roundTo(value: number, step: number): number {
   return Math.ceil(value / step) * step;
 }
 
+/** Ширина аппаратов щита в модулях: нужна для подбора корпуса. */
+const PANEL_CONTACTOR_MODULES = 2;
+const PANEL_VOLTAGE_RELAY_MODULES = 3;
+
 /** Round to nearest step (used for cable meters in КП examples). */
 export function roundNearest(value: number, step: number): number {
   if (step <= 0) return Math.round(value);
@@ -45,8 +49,10 @@ const DEFAULT_ROUTING: CableRoutingRules = {
   minRooms: 3,
   pointsForFullLap: 4,
   defaultCeilingHeightMeters: 2.7,
+  panelToRoomBaseMeters: 5.5,
+  panelToRoomPerSpanMeters: 1.25,
   panelToRoomMinMeters: 5,
-  panelToRoomMaxMeters: 25,
+  panelToRoomMaxMeters: 30,
   wasteFactor: 1.1,
   utpHomeRun: true,
 };
@@ -313,31 +319,29 @@ function computeQuantities(project: ExtractedProject) {
       );
 
   const fixed = rules.fixedItems;
-  const fixedModuleCount = Object.values(fixed).reduce((sum, n) => sum + n, 0);
-  const totalPoints =
+
+  // Занятость щита в модулях: однополюсные автоматы по одному модулю,
+  // двухполюсный ввод и УЗО по два, контактор два, реле напряжения три.
+  const panelSize = f.panelSize as {
+    fillFactor?: number;
+    thresholds: { modules: number; panelId: string }[];
+  };
+  const usedModules =
     breakers10 +
     breakers16 +
     breakers32 +
-    breakers50 +
-    rcdCount +
-    fixedModuleCount;
+    breakers50 * 2 +
+    rcdCount * 2 +
+    PANEL_CONTACTOR_MODULES +
+    PANEL_VOLTAGE_RELAY_MODULES;
+  // Щит берут с запасом под доработки, поэтому заполняем его не под завязку.
+  const fillFactor = panelSize.fillFactor ?? 0.7;
+  const sorted = [...panelSize.thresholds].sort((a, b) => a.modules - b.modules);
+  const chosen =
+    sorted.find((t) => usedModules <= t.modules * fillFactor) ?? sorted[sorted.length - 1];
 
-  const panelSize = f.panelSize as {
-    thresholds: { maxPoints: number; panelId: string }[];
-  };
-  const panelSizeKey =
-    panelSize.thresholds.find((t) => totalPoints <= t.maxPoints)?.panelId ??
-    panelSize.thresholds[panelSize.thresholds.length - 1]?.panelId ??
-    "panel-48";
-
-  const panelModules =
-    panelSizeKey.includes("90")
-      ? "90"
-      : panelSizeKey.includes("72")
-        ? "72"
-        : panelSizeKey.includes("54")
-          ? "54"
-          : "48";
+  const panelModules = String(chosen.modules);
+  const panelSizeKey = chosen.panelId;
 
   const largeProjectRule = f.largeProject as
     | {

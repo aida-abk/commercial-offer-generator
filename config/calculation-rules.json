@@ -152,11 +152,29 @@
       ]
     },
     "panelSize": {
+      "comment": "Корпус подбирается по занятости в модулях, а не по числу позиций сметы. Щит берут с запасом под доработки: в примерах КП Кербез с 36 модулями заполнен примерно на две трети, Tansu и Aididar с 54 — примерно наполовину.",
+      "fillFactor": 0.7,
       "thresholds": [
-        { "maxPoints": 55, "panelId": "panel-48" },
-        { "maxPoints": 75, "panelId": "panel-54" },
-        { "maxPoints": 95, "panelId": "panel-72" },
-        { "maxPoints": 999, "panelId": "panel-90" }
+        {
+          "modules": 36,
+          "panelId": "panel-36"
+        },
+        {
+          "modules": 48,
+          "panelId": "panel-48"
+        },
+        {
+          "modules": 54,
+          "panelId": "panel-54"
+        },
+        {
+          "modules": 72,
+          "panelId": "panel-72"
+        },
+        {
+          "modules": 90,
+          "panelId": "panel-90"
+        }
       ]
     },
     "largeProject": {
@@ -228,8 +246,11 @@
     "minRooms": 3,
     "pointsForFullLap": 4,
     "defaultCeilingHeightMeters": 2.7,
+    "panelToRoomComment": "Трасса щит → помещение = base + perSpan * sqrt(площадь). Откалибровано по кабелю 3*6 из готовых КП: это одна группа варочной поверхности, поэтому её метраж — прямой замер одной трассы. От 32 м² (17 м кабеля) до 130 м² (25 м) данные ложатся на base 5,5 и perSpan 1,25.",
+    "panelToRoomBaseMeters": 5.5,
+    "panelToRoomPerSpanMeters": 1.25,
     "panelToRoomMinMeters": 5,
-    "panelToRoomMaxMeters": 25,
+    "panelToRoomMaxMeters": 30,
     "wasteFactor": 1.1,
     "utpHomeRun": true
   },

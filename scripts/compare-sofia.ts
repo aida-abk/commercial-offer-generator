@@ -56,8 +56,9 @@ const ACTUAL = {
   grand: 1_788_550,
 };
 
-// Inferred from КП: подрозетники 75 = outlets + switches; лампочки 15 = light points;
-// labor 560 000 ₸ / 6500 ≈ 86 m².
+// Восстановлено из КП: подрозетники 75 = розетки + выключатели, лампочки 15 —
+// точки света, работы 560 000 ₸ / 6500 ≈ 86 м². Наличие строки кабеля 3*6
+// означает варочную поверхность, остальная техника для квартиры типовая.
 const PROJECT: ExtractedProject = {
   projectName: "ЖК София",
   totalAreaSqM: 86,
@@ -65,7 +66,14 @@ const PROJECT: ExtractedProject = {
   switches: 25,
   lightPoints: 15,
   utpPoints: 4,
-  warmFloorCircuits: 1,
+  warmFloorCircuits: 0,
+  dedicatedCircuits: {
+    fridge: 1,
+    hob: 1,
+    ovenMicrowave: 1,
+    airConditioners: 1,
+    warmFloor: 1,
+  },
   notes: [],
 };
 

@@ -19,10 +19,19 @@ import type {
  * Кабели группируются по помещениям: в каждом своя распределительная коробка.
  */
 
-/** Средняя манхэттенская длина от угла до точки в прямоугольнике со стороной s равна s. */
+/**
+ * Трасса от щита до распределительной коробки помещения, когда её нет на чертеже.
+ *
+ * Щит стоит у входа, поэтому в любой трассе есть постоянная часть — подъём от
+ * щита к потолку и выход из прихожей, — и часть, растущая с линейным размером
+ * квартиры. Обе части откалиброваны по кабелю 3*6 из готовых КП: это одна
+ * группа варочной поверхности, то есть прямой замер одной трассы без примесей.
+ */
 function estimatePanelToRoom(totalAreaSqM: number, rules: CableRoutingRules): number {
   const span = Math.sqrt(Math.max(totalAreaSqM, 1));
-  return clamp(span, rules.panelToRoomMinMeters, rules.panelToRoomMaxMeters);
+  const length =
+    rules.panelToRoomBaseMeters + rules.panelToRoomPerSpanMeters * span;
+  return clamp(length, rules.panelToRoomMinMeters, rules.panelToRoomMaxMeters);
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -198,13 +207,14 @@ export function estimateCableRoute(
     }
 
     if (room.utpPoints > 0) {
-      // Слаботочка разводится звездой от щита: своя линия на каждую розетку.
+      // Слаботочка разводится звездой: своя линия на каждую розетку. Обхода по
+      // помещению у такой линии нет — трасса до помещения уже ведёт к точке.
       const horizontal = rules.utpHomeRun
-        ? room.utpPoints * step
+        ? 0
         : lapLength(perimeter, room.utpPoints, rules.pointsForFullLap);
       const drops = room.utpPoints * drop;
       const total = rules.utpHomeRun
-        ? room.utpPoints * panelToBox + horizontal + drops
+        ? room.utpPoints * panelToBox + drops
         : panelToBox + horizontal + drops;
       cableUtp += total;
       legs.push({

@@ -16,12 +16,16 @@ interface KpFixture {
   };
 }
 
+// Отдельные группы восстановлены по самим КП: строка кабеля 3*6 есть у всех
+// квартир и означает варочную поверхность. В офисе такой строки нет — и группы
+// варочной поверхности там тоже нет. Остальной набор техники для квартиры типовой.
 const FIXTURES: KpFixture[] = [
   {
     name: "ЖК Aididar",
     project: {
       projectName: "ЖК Aididar",
       totalAreaSqM: 90,
+      dedicatedCircuits: { fridge: 1, hob: 1, ovenMicrowave: 1, airConditioners: 1 },
       outlets: 55,
       switches: 25,
       lightPoints: 13,
@@ -36,6 +40,7 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "ЖК Shabyt",
       totalAreaSqM: 100,
+      dedicatedCircuits: { fridge: 1, hob: 1, ovenMicrowave: 1, airConditioners: 2 },
       outlets: 65,
       switches: 30,
       lightPoints: 15,
@@ -50,6 +55,7 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "ЖК Tansu",
       totalAreaSqM: 70,
+      dedicatedCircuits: { fridge: 1, hob: 1, ovenMicrowave: 1, airConditioners: 1 },
       outlets: 45,
       switches: 20,
       lightPoints: 10,
@@ -64,6 +70,7 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "Офис",
       totalAreaSqM: 120,
+      dedicatedCircuits: {},
       outlets: 55,
       switches: 25,
       lightPoints: 13,
@@ -78,6 +85,7 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "ЖK Республика",
       totalAreaSqM: 32,
+      dedicatedCircuits: { fridge: 1, hob: 1, ovenMicrowave: 1 },
       outlets: 24,
       switches: 14,
       lightPoints: 8,
@@ -94,6 +102,7 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "ЖК VIVALDI",
       totalAreaSqM: 110,
+      dedicatedCircuits: { fridge: 1, freezer: 1, hob: 1, ovenMicrowave: 1, airConditioners: 2 },
       outlets: 80,
       switches: 35,
       lightPoints: 18,
@@ -112,6 +121,7 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "ЖК София",
       totalAreaSqM: 86,
+      dedicatedCircuits: { fridge: 1, hob: 1, ovenMicrowave: 1, airConditioners: 1, warmFloor: 1 },
       outlets: 50,
       switches: 25,
       lightPoints: 15,

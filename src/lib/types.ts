@@ -214,7 +214,12 @@ export interface CableRoutingRules {
   /** Сколько точек в помещении означают полный обход по периметру. */
   pointsForFullLap: number;
   defaultCeilingHeightMeters: number;
-  /** Границы для оценки трассы «щит → помещение», когда её нет на чертеже. */
+  /**
+   * Оценка трассы «щит → помещение», когда её нет на чертеже:
+   * постоянная часть плюс множитель на линейный размер квартиры, с границами.
+   */
+  panelToRoomBaseMeters: number;
+  panelToRoomPerSpanMeters: number;
   panelToRoomMinMeters: number;
   panelToRoomMaxMeters: number;
   /** Запас на разделку и укладку концов в коробках. */
