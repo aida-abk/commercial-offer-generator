@@ -7,6 +7,7 @@ export const maxDuration = 60;
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
+  const brand = searchParams.get("brand") ?? "schneider-easy9";
   if (!id) {
     return NextResponse.json({ error: "Параметр id обязателен" }, { status: 400 });
   }
@@ -16,18 +17,28 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "КП не найдено" }, { status: 404 });
   }
 
+  const brandKey = brand as keyof typeof offer.brandVariants;
+  const variant = offer.brandVariants[brandKey] ?? offer.brandVariants[offer.activeBrand];
+  const sections = {
+    labor: offer.lineItems.labor,
+    materials: offer.lineItems.materials,
+    panel: variant.panel,
+  };
+
+  const { loadPanelBrands } = await import("@/lib/catalog");
+  const brands = loadPanelBrands();
+  const brandLabel = brands[brandKey]?.label ?? brand;
+
   const html = generateOfferPdfHtml({
-    projectName: offer.projectName,
+    projectName: `${offer.projectName} (${brandLabel})`,
     clientName: offer.clientName,
-    sections: offer.lineItems,
-    grandTotal: offer.totalAmount,
+    totalAreaSqM: offer.extractedData.totalAreaSqM,
+    sections,
+    grandTotal: variant.totalAmount,
   });
 
-  const puppeteer = await import("puppeteer");
-  const browser = await puppeteer.default.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+  const { launchBrowser } = await import("@/lib/puppeteer-browser");
+  const browser = await launchBrowser();
 
   try {
     const page = await browser.newPage();

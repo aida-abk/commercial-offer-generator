@@ -2,19 +2,26 @@
   "rounding": {
     "cableMeters": 50,
     "conduitMeters": 50,
-    "countItems": 5
+    "countItems": 5,
+    "cable6Meters": 1,
+    "pugnpMeters": 10
   },
   "formulas": {
+    "cable2x1.5": {
+      "base": 10,
+      "perLight": 6
+    },
     "cable3x1.5": {
-      "base": 80,
-      "perSwitch": 5,
-      "perLight": 8,
-      "perAreaSqM": 1.2
+      "base": 35,
+      "perSwitch": 4.2,
+      "perLight": 5.8,
+      "perAreaSqM": 1.85,
+      "largeAreaBonusPerSqM": 8.5
     },
     "cable3x2.5": {
-      "base": 120,
-      "perOutlet": 3.2,
-      "perAreaSqM": 0.9
+      "base": 70,
+      "perOutlet": 3.42,
+      "perAreaSqM": 0.82
     },
     "cable3x6": {
       "base": 10,
@@ -22,76 +29,85 @@
       "fixed": 12
     },
     "cableUtp": {
-      "base": 20,
-      "perUtpPoint": 6,
-      "perAreaSqM": 0.2
+      "base": 0,
+      "perUtpPoint": 10,
+      "perAreaSqM": 0.2,
+      "largeProjectBonus": 60,
+      "largeProjectMinUtp": 7
     },
     "wirePugnp": {
-      "base": 20,
-      "perLight": 1.5
+      "base": 8,
+      "perLight": 2.2
     },
     "conduitPvc": {
-      "ratioOfTotalCable": 0.72
+      "ratioOfMainCable": 0.7,
+      "base": 0
     },
     "socketBoxes": {
       "perOutlet": 1,
       "perSwitch": 1,
-      "buffer": 3
+      "buffer": 0
     },
     "junctionBoxes": {
-      "base": 6,
-      "perAreaSqM": 0.12
+      "base": 0,
+      "perAreaSqM": 0,
+      "perSocketBox": 0.4
     },
     "clips": {
-      "perConduitMeter": 0.035,
-      "minPacks": 12
+      "perConduitMeter": 0.05,
+      "minPacks": 8
+    },
+    "pads": {
+      "perMainCableMeter": 0.031,
+      "minPacks": 8
     },
     "nails": {
-      "perAreaSqM": 0.015,
+      "perAreaSqM": 0.012,
       "minPacks": 1,
-      "maxPacks": 3
+      "maxPacks": 2
     },
     "cableTies": {
-      "perAreaSqM": 0.03,
+      "perAreaSqM": 0.025,
+      "perMainCableMeterNoConduit": 0.028,
       "minPacks": 2
     },
     "sleeves": {
       "gml4": {
-        "perBox": 1.5,
-        "min": 35
-      },
-      "gml6": {
-        "perBox": 1.2,
+        "perBox": 2,
         "min": 30
       },
+      "gml6": {
+        "perBox": 1.67,
+        "min": 25
+      },
       "gml10": {
-        "perBox": 0.8,
-        "min": 20
+        "perBox": 1.2,
+        "min": 18
       },
       "gml16": {
-        "perBox": 0.8,
-        "min": 18
+        "perBox": 1.2,
+        "min": 15
       }
     },
     "bulbs": {
       "perLight": 1,
-      "min": 10
-    },
-    "trashBags": {
-      "perAreaSqM": 0.08,
       "min": 8
     },
+    "trashBags": {
+      "perAreaSqM": 0.15,
+      "min": 10
+    },
     "tape": {
-      "perAreaSqM": 0.04,
-      "min": 4
+      "perAreaSqM": 0.075,
+      "min": 5
     },
     "breakers10a": {
-      "perLightGroup": 0.8,
-      "base": 2
+      "perLightGroup": 1,
+      "base": 4
     },
     "breakers16a": {
-      "perOutletGroup": 1.2,
-      "base": 5
+      "perOutletGroup": 1,
+      "base": 4
     },
     "breakers32a": {
       "fixed": 1
@@ -100,27 +116,55 @@
       "fixed": 1
     },
     "rcd": {
-      "perAreaSqM": 0.025,
+      "perAreaSqM": 0.022,
       "min": 2,
       "max": 3
     },
-    "panelSize": {
-      "thresholds": [
+    "panelTemplate": {
+      "comment": "В примерах КП щит собирается типовым шаблоном по площади, а не как функция от числа розеток: Aididar 90 м², Tansu 70 м² и Shabyt 100 м² имеют одинаковый состав 5/15/1/1 + 3 УЗО. Формулы breakers*/rcd используются только если шаблон убрать.",
+      "tiers": [
         {
-          "maxPoints": 55,
-          "panelId": "panel-48"
+          "maxAreaSqM": 50,
+          "breakers10a": 3,
+          "breakers16a": 8,
+          "breakers32a": 1,
+          "breakers50a": 1,
+          "rcd": 2,
+          "panelModules": "36"
         },
         {
-          "maxPoints": 75,
-          "panelId": "panel-54"
-        },
-        {
-          "maxPoints": 999,
-          "panelId": "panel-72"
+          "maxAreaSqM": 999,
+          "breakers10a": 5,
+          "breakers16a": 15,
+          "breakers32a": 1,
+          "breakers50a": 1,
+          "rcd": 3
         }
       ]
+    },
+    "panelSize": {
+      "thresholds": [
+        { "maxPoints": 55, "panelId": "panel-48" },
+        { "maxPoints": 75, "panelId": "panel-54" },
+        { "maxPoints": 95, "panelId": "panel-72" },
+        { "maxPoints": 999, "panelId": "panel-90" }
+      ]
+    },
+    "largeProject": {
+      "minOutlets": 70,
+      "rcdCount": 4,
+      "voltageRelayQty": 3,
+      "terminalBlocks": 7,
+      "panelModules": "90",
+      "cable25Multiplier": 1.33,
+      "pugnpMinPerLight": 4,
+      "conduitBonus": 50,
+      "nailsPacks": 3,
+      "clipsPacks": 30
     }
   },
+  "laborPerSqM": 6500,
+  "laborRoundTo": 10000,
   "laborTiers": [
     {
       "maxAreaSqM": 72,
@@ -165,5 +209,9 @@
     "terminalRed": 2,
     "terminalBlue": 2
   },
-  "includeConduitPnd": false
+  "includeConduitPnd": false,
+  "conduit": {
+    "comment": "Гофра — опция. На небольших площадях её обычно не включают, чтобы дать заказчику экономию. С гофрой крепёж — клипсы, без гофры — площадка монтажного пистолета.",
+    "includeAboveAreaSqM": 100
+  }
 }
