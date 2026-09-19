@@ -15,6 +15,9 @@ model Offer {
   extractedData  Json
   laborPrice     Float    @default(0)
   lineItems      Json
+  brandVariants  Json?
+  activeBrand    String   @default("schneider-easy9")
+  analyzedPages  Json?
   totalAmount    Float    @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt

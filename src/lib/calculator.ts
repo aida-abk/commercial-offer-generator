@@ -1,9 +1,31 @@
-import { findCatalogItem, loadCalculationRules, loadPriceCatalog } from "./catalog";
-import type { CalculationResult, ExtractedProject, LineItem } from "./types";
+import {
+  findCatalogItem,
+  loadCalculationRules,
+  loadPanelBrands,
+  loadPriceCatalog,
+} from "./catalog";
+import type {
+  BrandVariants,
+  CalculationResult,
+  ExtractedProject,
+  LineItem,
+  MultiBrandCalculationResult,
+  PanelBrandConfig,
+  PanelBrandId,
+} from "./types";
+import { PANEL_BRAND_IDS } from "./types";
 
 export function roundTo(value: number, step: number): number {
   if (step <= 0) return Math.round(value);
   return Math.ceil(value / step) * step;
+}
+
+/** Round to nearest step (used for cable meters in КП examples). */
+export function roundNearest(value: number, step: number): number {
+  if (step <= 0) return Math.round(value);
+  const rounded = Math.round(value / step) * step;
+  if (rounded === 0 && value > 0) return step;
+  return rounded;
 }
 
 function lineFromCatalog(
@@ -26,7 +48,13 @@ function lineFromCatalog(
 }
 
 function laborPriceForArea(areaSqM: number): number {
-  const { laborTiers } = loadCalculationRules();
+  const rules = loadCalculationRules();
+  if (rules.laborPerSqM) {
+    const step = rules.laborRoundTo ?? 10_000;
+    const raw = areaSqM * rules.laborPerSqM;
+    return Math.round(raw / step) * step;
+  }
+  const { laborTiers } = rules;
   const tier = laborTiers.find((t) => areaSqM <= t.maxAreaSqM);
   return tier?.price ?? laborTiers[laborTiers.length - 1]?.price ?? 0;
 }
@@ -50,11 +78,15 @@ function computeQuantities(project: ExtractedProject) {
   const utp = project.utpPoints;
   const warmFloor = project.warmFloorCircuits;
 
+  const cable2x15Raw =
+    num(f["cable2x1.5"], "base") + num(f["cable2x1.5"], "perLight") * lights;
+
   const cable15Raw =
     num(f["cable3x1.5"], "base") +
     num(f["cable3x1.5"], "perSwitch") * switches +
     num(f["cable3x1.5"], "perLight") * lights +
-    num(f["cable3x1.5"], "perAreaSqM") * area;
+    num(f["cable3x1.5"], "perAreaSqM") * area +
+    (area > 100 ? (area - 100) * num(f["cable3x1.5"], "largeAreaBonusPerSqM", 0) : 0);
 
   const cable25Raw =
     num(f["cable3x2.5"], "base") +
@@ -69,20 +101,41 @@ function computeQuantities(project: ExtractedProject) {
   const cableUtpRaw =
     num(f.cableUtp, "base") +
     num(f.cableUtp, "perUtpPoint") * utp +
-    num(f.cableUtp, "perAreaSqM") * area;
+    num(f.cableUtp, "perAreaSqM") * area +
+    (utp >= num(f.cableUtp, "largeProjectMinUtp", 999)
+      ? num(f.cableUtp, "largeProjectBonus", 0)
+      : 0);
 
   const wirePugnpRaw =
     num(f.wirePugnp, "base") + num(f.wirePugnp, "perLight") * lights;
 
-  const cable15 = roundTo(cable15Raw, r.cableMeters);
-  const cable25 = roundTo(cable25Raw, r.cableMeters);
-  const cable6 = roundTo(cable6Raw, r.cableMeters);
-  const cableUtp = roundTo(cableUtpRaw, r.cableMeters);
-  const wirePugnp = roundTo(wirePugnpRaw, r.cableMeters);
+  const cable2x15 = roundNearest(cable2x15Raw, r.cableMeters);
+  const cable15 = roundNearest(cable15Raw, r.cableMeters);
+  let cable25 = roundNearest(cable25Raw, r.cableMeters);
+  const cable6Step = r.cable6Meters ?? 1;
+  const cable6 =
+    cable6Raw <= 30
+      ? Math.max(0, Math.round(cable6Raw))
+      : roundNearest(cable6Raw, cable6Step);
+  const cableUtp = roundNearest(cableUtpRaw, r.cableMeters);
+  const pugnpStep = r.pugnpMeters ?? 10;
+  let wirePugnp = roundNearest(wirePugnpRaw, pugnpStep);
 
-  const totalCable = cable15 + cable25 + cable6 + cableUtp + wirePugnp;
-  const conduitRatio = num(f.conduitPvc, "ratioOfTotalCable", 1);
-  const conduitPvc = roundTo(totalCable * conduitRatio, r.conduitMeters);
+  const mainCable = cable15 + cable25;
+  const totalCable = cable2x15 + mainCable + cable6 + cableUtp + wirePugnp;
+
+  // Гофра — опция: на небольших площадях её обычно не берут (экономия для заказчика).
+  const conduitAreaThreshold = rules.conduit?.includeAboveAreaSqM ?? Number.MAX_SAFE_INTEGER;
+  const useConduit = project.useConduit ?? area > conduitAreaThreshold;
+
+  const mainCableRatio = num(f.conduitPvc, "ratioOfMainCable", 0);
+  const conduitRatio = num(f.conduitPvc, "ratioOfTotalCable", 0.72);
+  const conduitBase = num(f.conduitPvc, "base", 0);
+  const conduitRaw =
+    mainCableRatio > 0
+      ? mainCable * mainCableRatio + conduitBase
+      : totalCable * conduitRatio;
+  let conduitPvc = useConduit ? roundNearest(conduitRaw, r.conduitMeters) : 0;
   const conduitPnd = roundTo(totalCable * 0.35, r.conduitMeters);
 
   const socketBoxesRaw =
@@ -92,39 +145,45 @@ function computeQuantities(project: ExtractedProject) {
   const socketBoxes = roundTo(socketBoxesRaw, r.countItems);
 
   const junctionBoxesRaw =
-    num(f.junctionBoxes, "base") + num(f.junctionBoxes, "perAreaSqM") * area;
+    num(f.junctionBoxes, "base") +
+    num(f.junctionBoxes, "perAreaSqM") * area +
+    num(f.junctionBoxes, "perSocketBox") * socketBoxes;
   const junctionBoxes = roundTo(junctionBoxesRaw, r.countItems);
 
-  const clipsRaw = num(f.clips, "perConduitMeter") * conduitPvc;
+  // С гофрой крепёж — клипсы, без гофры — площадка монтажного пистолета.
   const clipsMin = num(f.clips, "minPacks");
-  const clips = Math.max(roundTo(clipsRaw, r.countItems), clipsMin);
+  let clips = useConduit
+    ? Math.max(roundTo(num(f.clips, "perConduitMeter") * conduitPvc, r.countItems), clipsMin)
+    : 0;
+  const pads = useConduit
+    ? 0
+    : Math.max(
+        roundTo(num(f.pads, "perMainCableMeter") * mainCable, 1),
+        num(f.pads, "minPacks"),
+      );
 
   const nailsRaw = num(f.nails, "perAreaSqM") * area;
-  const nails = Math.min(
+  let nails = Math.min(
     Math.max(roundTo(nailsRaw, 1), num(f.nails, "minPacks")),
     num(f.nails, "maxPacks"),
   );
 
-  const cableTiesRaw = num(f.cableTies, "perAreaSqM") * area;
+  // Без гофры кабель крепится напрямую, хомутов уходит существенно больше.
+  const cableTiesRaw = useConduit
+    ? num(f.cableTies, "perAreaSqM") * area
+    : num(f.cableTies, "perMainCableMeterNoConduit") * mainCable;
   const cableTies = Math.max(roundTo(cableTiesRaw, 1), num(f.cableTies, "minPacks"));
 
   const sleeves = f.sleeves as Record<string, NumericRecord>;
-  const sleeveGml4 = Math.max(
-    roundTo(num(sleeves.gml4, "perBox") * junctionBoxes, r.countItems),
-    num(sleeves.gml4, "min"),
-  );
-  const sleeveGml6 = Math.max(
-    roundTo(num(sleeves.gml6, "perBox") * junctionBoxes, r.countItems),
-    num(sleeves.gml6, "min"),
-  );
-  const sleeveGml10 = Math.max(
-    roundTo(num(sleeves.gml10, "perBox") * junctionBoxes, r.countItems),
-    num(sleeves.gml10, "min"),
-  );
-  const sleeveGml16 = Math.max(
-    roundTo(num(sleeves.gml16, "perBox") * junctionBoxes, r.countItems),
-    num(sleeves.gml16, "min"),
-  );
+  const sleeveQty = (key: string) =>
+    Math.max(
+      roundNearest(num(sleeves[key], "perBox") * junctionBoxes, r.countItems),
+      num(sleeves[key], "min"),
+    );
+  const sleeveGml4 = sleeveQty("gml4");
+  const sleeveGml6 = sleeveQty("gml6");
+  const sleeveGml10 = sleeveQty("gml10");
+  const sleeveGml16 = sleeveQty("gml16");
 
   const bulbs = Math.max(
     roundTo(num(f.bulbs, "perLight") * lights, r.countItems),
@@ -144,10 +203,19 @@ function computeQuantities(project: ExtractedProject) {
   const lightGroups = Math.max(1, Math.ceil(lights / 8));
   const outletGroups = Math.max(1, Math.ceil(outlets / 6));
 
-  let breakers10 = num(f.breakers10a, "base") + num(f.breakers10a, "perLightGroup") * lightGroups;
-  let breakers16 = num(f.breakers16a, "base") + num(f.breakers16a, "perOutletGroup") * outletGroups;
-  let breakers32 = num(f.breakers32a, "fixed");
-  let breakers50 = num(f.breakers50a, "fixed");
+  type PanelTemplateTier = { maxAreaSqM: number; panelModules?: string };
+  const template = (
+    f.panelTemplate as { tiers?: PanelTemplateTier[] } | undefined
+  )?.tiers?.find((t) => area <= t.maxAreaSqM);
+
+  let breakers10 = template
+    ? num(template, "breakers10a")
+    : num(f.breakers10a, "base") + num(f.breakers10a, "perLightGroup") * lightGroups;
+  let breakers16 = template
+    ? num(template, "breakers16a")
+    : num(f.breakers16a, "base") + num(f.breakers16a, "perOutletGroup") * outletGroups;
+  let breakers32 = template ? num(template, "breakers32a") : num(f.breakers32a, "fixed");
+  let breakers50 = template ? num(template, "breakers50a") : num(f.breakers50a, "fixed");
 
   if (project.estimatedCircuits?.length) {
     breakers10 = 0;
@@ -167,9 +235,12 @@ function computeQuantities(project: ExtractedProject) {
   breakers32 = roundTo(breakers32, 1);
   breakers50 = roundTo(breakers50, 1);
 
-  const rcdRaw = num(f.rcd, "perAreaSqM") * area;
-  let rcdCount = Math.round(rcdRaw);
-  rcdCount = Math.min(Math.max(rcdCount, num(f.rcd, "min")), num(f.rcd, "max"));
+  const rcdCount = template
+    ? num(template, "rcd")
+    : Math.min(
+        Math.max(Math.round(num(f.rcd, "perAreaSqM") * area), num(f.rcd, "min")),
+        num(f.rcd, "max"),
+      );
 
   const fixed = rules.fixedItems;
   const fixedModuleCount = Object.values(fixed).reduce((sum, n) => sum + n, 0);
@@ -184,22 +255,81 @@ function computeQuantities(project: ExtractedProject) {
   const panelSize = f.panelSize as {
     thresholds: { maxPoints: number; panelId: string }[];
   };
-  const panelId =
+  const panelSizeKey =
     panelSize.thresholds.find((t) => totalPoints <= t.maxPoints)?.panelId ??
     panelSize.thresholds[panelSize.thresholds.length - 1]?.panelId ??
     "panel-48";
 
+  const panelModules =
+    panelSizeKey.includes("90")
+      ? "90"
+      : panelSizeKey.includes("72")
+        ? "72"
+        : panelSizeKey.includes("54")
+          ? "54"
+          : "48";
+
+  const largeProjectRule = f.largeProject as
+    | {
+        minOutlets?: number;
+        rcdCount?: number;
+        voltageRelayQty?: number;
+        terminalBlocks?: number;
+        panelModules?: string;
+        cable25Multiplier?: number;
+        pugnpMinPerLight?: number;
+        conduitBonus?: number;
+        nailsPacks?: number;
+        clipsPacks?: number;
+      }
+    | undefined;
+  const isLargeProject = outlets >= (largeProjectRule?.minOutlets ?? Number.MAX_SAFE_INTEGER);
+
+  let voltageRelayQty = 1;
+  let terminalBlockCount = 0;
+  let resolvedPanelModules = template?.panelModules ?? panelModules;
+  let resolvedRcdCount = rcdCount;
+
+  if (isLargeProject && largeProjectRule) {
+    resolvedRcdCount = largeProjectRule.rcdCount ?? resolvedRcdCount;
+    voltageRelayQty = largeProjectRule.voltageRelayQty ?? 3;
+    terminalBlockCount = largeProjectRule.terminalBlocks ?? 0;
+    resolvedPanelModules = largeProjectRule.panelModules ?? resolvedPanelModules;
+    if (largeProjectRule.cable25Multiplier) {
+      cable25 = roundNearest(cable25 * largeProjectRule.cable25Multiplier, r.cableMeters);
+    }
+    if (largeProjectRule.pugnpMinPerLight) {
+      wirePugnp = roundNearest(
+        Math.max(wirePugnp, lights * largeProjectRule.pugnpMinPerLight),
+        pugnpStep,
+      );
+    }
+    if (largeProjectRule.conduitBonus) {
+      conduitPvc = roundNearest(conduitPvc + largeProjectRule.conduitBonus, r.conduitMeters);
+    }
+  }
+
+  if (isLargeProject && largeProjectRule?.nailsPacks) {
+    nails = largeProjectRule.nailsPacks;
+  }
+  if (isLargeProject && largeProjectRule?.clipsPacks) {
+    clips = largeProjectRule.clipsPacks;
+  }
+
   return {
+    cable2x15,
     cable15,
     cable25,
     cable6,
     cableUtp,
     wirePugnp,
+    useConduit,
     conduitPvc,
     conduitPnd,
     socketBoxes,
     junctionBoxes,
     clips,
+    pads,
     nails,
     cableTies,
     sleeveGml4,
@@ -213,36 +343,114 @@ function computeQuantities(project: ExtractedProject) {
     breakers16,
     breakers32,
     breakers50,
-    rcdCount,
-    panelId,
+    rcdCount: resolvedRcdCount,
+    panelModules: resolvedPanelModules,
+    voltageRelayQty,
+    terminalBlockCount,
+    isLargeProject,
     fixed,
   };
 }
 
-const FIXED_PANEL_MAP: Record<string, string> = {
-  contactor: "contactor-63a",
-  voltageRelay: "voltage-relay",
-  coreBit: "core-bit-72",
-  discStone: "disc-stone-125",
-  dowelClamp: "dowel-clamp",
-  rotband: "rotband-25kg",
-  socketDouble: "socket-double",
-  cableLabel: "cable-label",
-  pugv4Red: "pugv-4-red",
-  pugv4Blue: "pugv-4-blue",
-  neutralBus: "neutral-bus",
-  cableTie4x150: "cable-tie-4x150",
-  nshvi: "nshvi-4-12",
-  padSelfAdhesive: "pad-self-adhesive",
-  terminalRed: "terminal-red",
-  terminalBlue: "terminal-blue",
-};
+function buildMaterials(q: ReturnType<typeof computeQuantities>): LineItem[] {
+  const materialSpecs: { id: string; qty: number }[] = [
+    { id: "cable-vvgng-2x1.5", qty: q.cable2x15 },
+    { id: "cable-vvgng-3x1.5", qty: q.cable15 },
+    { id: "cable-vvgng-3x2.5", qty: q.cable25 },
+    { id: "cable-vvgng-3x6", qty: q.cable6 },
+    { id: "cable-utp", qty: q.cableUtp },
+    { id: "wire-pugnp", qty: q.wirePugnp },
+    { id: "conduit-pvc-d20", qty: q.conduitPvc },
+    { id: "nails-19mm", qty: q.nails },
+    { id: "cable-ties-150", qty: q.cableTies },
+    { id: "junction-box", qty: q.junctionBoxes },
+    { id: "clips-d20", qty: q.clips },
+    { id: "pad-gun-d20", qty: q.pads },
+    { id: "socket-box", qty: q.socketBoxes },
+    { id: "socket-cover", qty: q.socketBoxes },
+    { id: "sleeve-gml-4-3", qty: q.sleeveGml4 },
+    { id: "sleeve-gml-6-4", qty: q.sleeveGml6 },
+    { id: "sleeve-gml-10-5", qty: q.sleeveGml10 },
+    { id: "sleeve-gml-16-6", qty: q.sleeveGml16 },
+    { id: "trash-bags", qty: q.trashBags },
+    { id: "tape", qty: q.tape },
+    { id: "socket-e27", qty: q.bulbs },
+    { id: "bulb-led", qty: q.bulbs },
+    { id: "dowel-clamp", qty: 2 },
+    { id: "disc-stone-125", qty: 2 },
+    { id: "core-bit-72", qty: 1 },
+    { id: "socket-double", qty: 2 },
+    { id: "rotband-25kg", qty: q.isLargeProject ? 2 : 1 },
+  ];
 
-export function calculateOffer(
+  if (q.isLargeProject) {
+    materialSpecs.push({ id: "cable-channel-40", qty: 4 });
+  }
+
+  if (loadCalculationRules().includeConduitPnd && q.useConduit) {
+    const pvcIndex = materialSpecs.findIndex((s) => s.id === "conduit-pvc-d20");
+    materialSpecs.splice(pvcIndex + 1, 0, { id: "conduit-pnd-d20", qty: q.conduitPnd });
+  }
+
+  return materialSpecs
+    .map(({ id, qty }) => lineFromCatalog("materials", id, qty))
+    .filter((item): item is LineItem => item !== null);
+}
+
+function buildPanelForBrand(
+  brand: PanelBrandConfig,
+  q: ReturnType<typeof computeQuantities>,
+): LineItem[] {
+  const panelCatalogId = brand.panels[q.panelModules] ?? brand.panels["48"];
+  const relayQty = q.isLargeProject
+    ? q.voltageRelayQty
+    : brand.voltageRelayQty ?? 1;
+  const rcdCatalogId =
+    q.isLargeProject && brand.largeRcd ? brand.largeRcd : brand.rcd;
+  const breakerIds = q.isLargeProject && brand.largeBreakers ? brand.largeBreakers : brand.breakers;
+
+  const panelSpecs: { id: string; qty: number }[] = [
+    { id: breakerIds["10a"], qty: q.breakers10 },
+    { id: breakerIds["16a"], qty: q.breakers16 },
+    { id: breakerIds["32a"], qty: q.breakers32 },
+    { id: breakerIds["50a"], qty: q.breakers50 },
+    { id: rcdCatalogId, qty: q.rcdCount },
+    { id: brand.contactor, qty: 1 },
+    { id: brand.voltageRelay, qty: relayQty },
+    { id: panelCatalogId, qty: 1 },
+  ];
+
+  for (const [key, qty] of Object.entries(brand.fixedItems)) {
+    const isTerminalKey =
+      key === "terminalRed" || key === "terminalBlue" || key === "terminalRbd";
+    if (q.isLargeProject && q.terminalBlockCount > 0 && isTerminalKey) {
+      continue;
+    }
+    const catalogId = brand.fixedCatalogMap[key];
+    if (catalogId) {
+      panelSpecs.push({ id: catalogId, qty });
+    }
+  }
+
+  if (q.terminalBlockCount > 0) {
+    panelSpecs.push({ id: "terminal-block-rbd", qty: q.terminalBlockCount });
+  }
+
+  return panelSpecs
+    .map(({ id, qty }) => lineFromCatalog("panel", id, qty))
+    .filter((item): item is LineItem => item !== null);
+}
+
+function sumItems(items: LineItem[]): number {
+  return items.reduce((sum, item) => sum + item.total, 0);
+}
+
+export function calculateAllVariants(
   project: ExtractedProject,
   laborOverride?: number,
-): CalculationResult {
+): MultiBrandCalculationResult {
   const catalog = loadPriceCatalog();
+  const brands = loadPanelBrands();
   const q = computeQuantities(project);
   const laborPrice = laborOverride ?? laborPriceForArea(project.totalAreaSqM);
 
@@ -258,67 +466,65 @@ export function calculateOffer(
     },
   ];
 
-  const materialSpecs: { id: string; qty: number }[] = [
-    { id: "cable-vvgng-3x1.5", qty: q.cable15 },
-    { id: "cable-vvgng-3x2.5", qty: q.cable25 },
-    { id: "cable-vvgng-3x6", qty: q.cable6 },
-    { id: "cable-utp", qty: q.cableUtp },
-    { id: "wire-pugnp", qty: q.wirePugnp },
-    { id: "conduit-pvc-d20", qty: q.conduitPvc },
-    { id: "nails-19mm", qty: q.nails },
-    { id: "cable-ties-150", qty: q.cableTies },
-    { id: "junction-box", qty: q.junctionBoxes },
-    { id: "clips-d20", qty: q.clips },
-    { id: "socket-box", qty: q.socketBoxes },
-    { id: "socket-cover", qty: q.socketBoxes },
-    { id: "sleeve-gml-4-3", qty: q.sleeveGml4 },
-    { id: "sleeve-gml-6-4", qty: q.sleeveGml6 },
-    { id: "sleeve-gml-10-5", qty: q.sleeveGml10 },
-    { id: "sleeve-gml-16-6", qty: q.sleeveGml16 },
-    { id: "trash-bags", qty: q.trashBags },
-    { id: "tape", qty: q.tape },
-    { id: "socket-e27", qty: q.bulbs },
-    { id: "bulb-led", qty: q.bulbs },
-    { id: "dowel-clamp", qty: 2 },
-    { id: "disc-stone-125", qty: 2 },
-    { id: "core-bit-72", qty: 1 },
-    { id: "socket-double", qty: 2 },
-    { id: "rotband-25kg", qty: 1 },
-  ];
+  const materials = buildMaterials(q);
+  const laborTotal = sumItems(labor);
+  const materialsTotal = sumItems(materials);
 
-  const rulesConfig = loadCalculationRules() as { includeConduitPnd?: boolean };
-  if (rulesConfig.includeConduitPnd) {
-    materialSpecs.splice(6, 0, { id: "conduit-pnd-d20", qty: q.conduitPnd });
+  const variants = {} as BrandVariants;
+  for (const brandId of PANEL_BRAND_IDS) {
+    const brand = brands[brandId];
+    const panel = buildPanelForBrand(brand, q);
+    variants[brandId] = {
+      panel,
+      totalAmount: laborTotal + materialsTotal + sumItems(panel),
+    };
   }
 
-  const materials: LineItem[] = materialSpecs
-    .map(({ id, qty }) => lineFromCatalog("materials", id, qty))
-    .filter((item): item is LineItem => item !== null);
+  return { labor, materials, laborPrice, variants };
+}
 
-  const panelSpecs: { id: string; qty: number }[] = [
-    { id: "breaker-rx3-10a", qty: q.breakers10 },
-    { id: "breaker-rx3-16a", qty: q.breakers16 },
-    { id: "breaker-rx3-32a", qty: q.breakers32 },
-    { id: "breaker-rx3-50a-2p", qty: q.breakers50 },
-    { id: "rcd-2p-63a", qty: q.rcdCount },
-    { id: q.panelId, qty: 1 },
-  ];
+export function calculateOffer(
+  project: ExtractedProject,
+  laborOverride?: number,
+  brand: PanelBrandId = "schneider-easy9",
+): CalculationResult {
+  const all = calculateAllVariants(project, laborOverride);
+  const variant = all.variants[brand];
+  return {
+    labor: all.labor,
+    materials: all.materials,
+    panel: variant.panel,
+    grandTotal: variant.totalAmount,
+    laborPrice: all.laborPrice,
+  };
+}
 
-  for (const [key, qty] of Object.entries(q.fixed)) {
-    const catalogId = FIXED_PANEL_MAP[key];
-    if (catalogId) {
-      panelSpecs.push({ id: catalogId, qty });
-    }
+export function recalculateVariantTotals(
+  labor: LineItem[],
+  materials: LineItem[],
+  variants: BrandVariants,
+): BrandVariants {
+  const laborTotal = sumItems(labor);
+  const materialsTotal = sumItems(materials);
+  const next = { ...variants };
+  for (const brandId of PANEL_BRAND_IDS) {
+    next[brandId] = {
+      ...next[brandId],
+      totalAmount: laborTotal + materialsTotal + sumItems(next[brandId].panel),
+    };
   }
+  return next;
+}
 
-  const panel: LineItem[] = panelSpecs
-    .map(({ id, qty }) => lineFromCatalog("panel", id, qty))
-    .filter((item): item is LineItem => item !== null);
-
-  const grandTotal = [...labor, ...materials, ...panel].reduce(
-    (sum, item) => sum + item.total,
-    0,
-  );
-
-  return { labor, materials, panel, grandTotal, laborPrice };
+export function sectionsForBrand(
+  labor: LineItem[],
+  materials: LineItem[],
+  variants: BrandVariants,
+  brand: PanelBrandId,
+) {
+  return {
+    labor,
+    materials,
+    panel: variants[brand].panel,
+  };
 }

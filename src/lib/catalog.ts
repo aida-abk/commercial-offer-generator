@@ -31,6 +31,10 @@ export function loadCompanyBoilerplate() {
   return readJson<import("./types").CompanyBoilerplate>("company-boilerplate.json");
 }
 
+export function loadPanelBrands() {
+  return readJson<Record<string, import("./types").PanelBrandConfig>>("panel-brands.json");
+}
+
 export function findCatalogItem(
   section: "materials" | "panel",
   id: string,

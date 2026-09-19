@@ -1,0 +1,133 @@
+{
+  "schneider-easy9": {
+    "label": "Schneider Easy 9",
+    "breakers": {
+      "10a": "breaker-rx3-10a",
+      "16a": "breaker-rx3-16a",
+      "32a": "breaker-rx3-32a",
+      "50a": "breaker-rx3-50a-2p"
+    },
+    "rcd": "rcd-rx3-2p-63a",
+    "contactor": "contactor-schneider-63a",
+    "voltageRelay": "voltage-relay-welrok",
+    "panels": {
+      "36": "panel-schneider-36",
+      "48": "panel-schneider-48",
+      "54": "panel-schneider-54",
+      "72": "panel-schneider-72",
+      "90": "panel-schneider-90"
+    },
+    "fixedItems": {
+      "cableLabel": 2,
+      "pugv4Red": 7,
+      "pugv4Blue": 8,
+      "neutralBus": 2,
+      "cableTie4x150": 3,
+      "nshvi": 1,
+      "padSelfAdhesive": 1,
+      "terminalRed": 2,
+      "terminalBlue": 2
+    },
+    "fixedCatalogMap": {
+      "cableLabel": "cable-label",
+      "pugv4Red": "pugv-4-red",
+      "pugv4Blue": "pugv-4-blue",
+      "neutralBus": "neutral-bus",
+      "cableTie4x150": "cable-tie-4x150",
+      "nshvi": "nshvi-4-12",
+      "padSelfAdhesive": "pad-self-adhesive",
+      "terminalRed": "terminal-red",
+      "terminalBlue": "terminal-blue"
+    }
+  },
+  "chint": {
+    "label": "CHINT",
+    "breakers": {
+      "10a": "breaker-chint-10a",
+      "16a": "breaker-chint-16a",
+      "32a": "breaker-chint-32a",
+      "50a": "breaker-chint-50a-4p"
+    },
+    "rcd": "rcd-chint-1pn-63a",
+    "contactor": "contactor-chint-63a",
+    "voltageRelay": "voltage-relay-welrok",
+    "voltageRelayQty": 1,
+    "panels": {
+      "36": "panel-chint-36",
+      "48": "panel-chint-48",
+      "54": "panel-chint-54",
+      "72": "panel-chint-72",
+      "90": "panel-chint-90"
+    },
+    "fixedItems": {
+      "cableLabel": 3,
+      "pugv6Green": 4,
+      "pugv6Blue": 7,
+      "cableTie4x150": 4,
+      "nshvi": 1,
+      "padSelfAdhesive": 1,
+      "bus63Single": 1,
+      "terminalRbd": 4
+    },
+    "fixedCatalogMap": {
+      "cableLabel": "cable-label",
+      "pugv6Green": "pugv-6-green",
+      "pugv6Blue": "pugv-6-blue",
+      "cableTie4x150": "cable-tie-4x150",
+      "nshvi": "nshvi-6-12",
+      "padSelfAdhesive": "pad-self-adhesive",
+      "bus63Single": "bus-63-single",
+      "terminalRbd": "terminal-block-rbd"
+    }
+  },
+  "legrand": {
+    "label": "Legrand",
+    "breakers": {
+      "10a": "breaker-legrand-10a",
+      "16a": "breaker-legrand-16a",
+      "32a": "breaker-legrand-32a",
+      "50a": "breaker-legrand-50a-2p"
+    },
+    "rcd": "rcd-legrand-2p-63a",
+    "contactor": "contactor-legrand-63a",
+    "voltageRelay": "voltage-relay-welrok",
+    "panels": {
+      "36": "panel-legrand-36",
+      "48": "panel-legrand-48",
+      "54": "panel-legrand-54",
+      "72": "panel-legrand-72",
+      "90": "panel-legrand-90"
+    },
+    "largeBreakers": {
+      "10a": "breaker-legrand-resi9-10a",
+      "16a": "breaker-legrand-resi9-16a",
+      "32a": "breaker-legrand-32a",
+      "50a": "breaker-legrand-50a-2p"
+    },
+    "largeRcd": "rcd-legrand-3pn-63a",
+    "fixedItems": {
+      "cableLabel": 2,
+      "pugv4Red": 7,
+      "pugv4Blue": 8,
+      "wifiBox": 1,
+      "neutralBus": 2,
+      "cableTie4x150": 3,
+      "nshvi": 1,
+      "padSelfAdhesive": 1,
+      "terminalRed": 2,
+      "terminalBlue": 2
+    },
+    "fixedCatalogMap": {
+      "cableLabel": "cable-label",
+      "pugv4Red": "pugv-4-red",
+      "pugv4Blue": "pugv-4-blue",
+      "wifiBox": "wifi-box-danilight",
+      "neutralBus": "neutral-bus",
+      "cableTie4x150": "cable-tie-4x150",
+      "nshvi": "nshvi-4-12",
+      "padSelfAdhesive": "pad-self-adhesive",
+      "terminalRed": "terminal-red",
+      "terminalBlue": "terminal-blue"
+    }
+  }
+}
