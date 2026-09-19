@@ -12,7 +12,9 @@
     "postinstall": "prisma generate && node scripts/ensure-chrome.mjs || true",
     "validate": "tsx scripts/validate-calculator.ts",
     "benchmark": "tsx scripts/benchmark-kp-examples.ts",
-    "compare:sofia": "tsx scripts/compare-sofia.ts"
+    "compare:sofia": "tsx scripts/compare-sofia.ts",
+    "benchmark:cable": "tsx scripts/benchmark-cable-routing.ts",
+    "extract:kp": "tsx scripts/extract-kp-cables.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
