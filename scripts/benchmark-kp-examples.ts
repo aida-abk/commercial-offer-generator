@@ -133,8 +133,16 @@ function sumSection(items: { total: number }[]): number {
   return items.reduce((s, i) => s + i.total, 0);
 }
 
+import { loadCalculationRules } from "../src/lib/catalog";
+
+const rules = loadCalculationRules();
+
 console.log("=== Benchmark: calculator vs «Примеры КП» ===\n");
-console.log("Labor: 6500 ₸/m², округление до 10 000 ₸\n");
+console.log(
+  `Работы по умолчанию: ${rules.laborPerSqM} ₸/м², округление до ${rules.laborRoundTo} ₸.\n` +
+    "Сравнение materials/panel/grand идёт при исторической цене работ из КП,\n" +
+    "иначе смена ставки маскирует расхождения по материалам и щиту.\n",
+);
 
 const rows: {
   name: string;
@@ -146,7 +154,18 @@ const rows: {
 }[] = [];
 
 for (const f of FIXTURES) {
-  const result = calculateOffer(f.project, undefined, f.brand ?? "schneider-easy9");
+  // Историческая цена работ из самого КП: ставка изменилась (7000 ₸/м²),
+  // поэтому для сравнения материалов и щита она подставляется как есть.
+  const historicalLabor =
+    f.expected.labor ??
+    (f.expected.grand !== undefined &&
+    f.expected.materials !== undefined &&
+    f.expected.panel !== undefined
+      ? f.expected.grand - f.expected.materials - f.expected.panel
+      : undefined);
+
+  const result = calculateOffer(f.project, historicalLabor, f.brand ?? "schneider-easy9");
+  const defaultLabor = calculateOffer(f.project, undefined, f.brand ?? "schneider-easy9").laborPrice;
   const actual = {
     labor: result.laborPrice,
     materials: sumSection(result.materials),
@@ -158,7 +177,7 @@ for (const f of FIXTURES) {
     `--- ${f.name} (${f.project.totalAreaSqM} m², ${f.project.outlets} роз / ${f.project.switches} выкл / ${f.project.lightPoints} свет) ---`,
   );
 
-  for (const section of ["materials", "panel", "labor", "grand"] as const) {
+  for (const section of ["materials", "panel", "grand"] as const) {
     if (section === "materials" && f.skipMaterials) continue;
     const exp = f.expected[section];
     if (exp === undefined) continue;
@@ -168,6 +187,11 @@ for (const f of FIXTURES) {
     rows.push({ name: f.name, section, expected: exp, actual: act, diffPct: diff, ok });
     console.log(
       `  ${section.padEnd(10)} expected ${exp.toLocaleString("ru-RU").padStart(12)} | actual ${act.toLocaleString("ru-RU").padStart(12)} | ${pctDiff(act, exp).padStart(7)} ${ok ? "✓" : "✗"}`,
+    );
+  }
+  if (historicalLabor !== undefined) {
+    console.log(
+      `  ${"работы".padEnd(10)} в КП было ${historicalLabor.toLocaleString("ru-RU").padStart(9)} | по новой ставке ${defaultLabor.toLocaleString("ru-RU").padStart(9)} | ${pctDiff(defaultLabor, historicalLabor).padStart(7)} (справочно)`,
     );
   }
   console.log("");

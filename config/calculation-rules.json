@@ -1,44 +1,45 @@
 {
+  "geometry": {
+    "comment": "Геометрия трасс: кабель идёт по потолку от щита и спускается по стене. Спуск 3 м задан заказчиком, остальные значения откалиброваны по эталонным КП (npm run benchmark).",
+    "dropToPointM": 3,
+    "panelToRoomBaseM": 4,
+    "panelToRoomPerSqrtAreaM": 0.3,
+    "inRoomRunPerPointM": 1.5,
+    "spotToSpotM": 1.8,
+    "twoWayLinkM": 6,
+    "airConExtraM": 5,
+    "warmFloorExtraM": 3,
+    "kitchenApplianceExtraM": 3,
+    "leakSensorExtraM": 4,
+    "wasteFactor": 0.04,
+    "tempLightPerBulbM": 6
+  },
+  "panelModuleWidths": {
+    "comment": "Ширина аппаратов в модулях; корпус подбирается по факту + spare модулей в запас.",
+    "inputBreaker2p": 2,
+    "voltageRelay": 2,
+    "contactor": 2,
+    "rcd": 2,
+    "breaker1p": 1,
+    "terminalRbd": 1.5,
+    "spare": 12,
+    "sizes": [
+      36,
+      48,
+      54,
+      72,
+      90
+    ]
+  },
   "rounding": {
     "cableMeters": 50,
     "conduitMeters": 50,
     "countItems": 5,
     "cable6Meters": 1,
-    "pugnpMeters": 10
+    "pugnpMeters": 10,
+    "utpMeters": 10
   },
   "formulas": {
-    "cable2x1.5": {
-      "base": 10,
-      "perLight": 6
-    },
-    "cable3x1.5": {
-      "base": 35,
-      "perSwitch": 4.2,
-      "perLight": 5.8,
-      "perAreaSqM": 1.85,
-      "largeAreaBonusPerSqM": 8.5
-    },
-    "cable3x2.5": {
-      "base": 70,
-      "perOutlet": 3.42,
-      "perAreaSqM": 0.82
-    },
-    "cable3x6": {
-      "base": 10,
-      "perWarmFloor": 4,
-      "fixed": 12
-    },
-    "cableUtp": {
-      "base": 0,
-      "perUtpPoint": 10,
-      "perAreaSqM": 0.2,
-      "largeProjectBonus": 60,
-      "largeProjectMinUtp": 7
-    },
-    "wirePugnp": {
-      "base": 8,
-      "perLight": 2.2
-    },
     "conduitPvc": {
       "ratioOfMainCable": 0.7,
       "base": 0
@@ -49,9 +50,22 @@
       "buffer": 0
     },
     "junctionBoxes": {
-      "base": 0,
-      "perAreaSqM": 0,
-      "perSocketBox": 0.4
+      "comment": "Розетки разводятся без шлейфа, через распредкоробки: коробка на группу плюс доля на точку.",
+      "perCircuit": 1,
+      "perPoint": 0.2
+    },
+    "rcd": {
+      "comment": "На одно УЗО подвязываются 3–4 автомата 16А (только розеточные группы).",
+      "perSocketGroups": 4,
+      "min": 1
+    },
+    "mergeSmallRooms": {
+      "comment": "Балкон, гардероб и тех.помещения с парой точек не получают отдельный автомат — подключаются к соседней группе; кабель до них считается, автомат нет.",
+      "types": [
+        "balcony",
+        "utility"
+      ],
+      "maxPoints": 2
     },
     "clips": {
       "perConduitMeter": 0.05,
@@ -90,7 +104,7 @@
       }
     },
     "bulbs": {
-      "perLight": 1,
+      "comment": "Временные лампочки на время стройки — 3–4 на комнату (src/lib/circuits.ts).",
       "min": 8
     },
     "trashBags": {
@@ -101,69 +115,16 @@
       "perAreaSqM": 0.075,
       "min": 5
     },
-    "breakers10a": {
-      "perLightGroup": 1,
-      "base": 4
-    },
-    "breakers16a": {
-      "perOutletGroup": 1,
-      "base": 4
-    },
-    "breakers32a": {
-      "fixed": 1
-    },
-    "breakers50a": {
-      "fixed": 1
-    },
-    "rcd": {
-      "perAreaSqM": 0.022,
-      "min": 2,
-      "max": 3
-    },
-    "panelTemplate": {
-      "comment": "В примерах КП щит собирается типовым шаблоном по площади, а не как функция от числа розеток: Aididar 90 м², Tansu 70 м² и Shabyt 100 м² имеют одинаковый состав 5/15/1/1 + 3 УЗО. Формулы breakers*/rcd используются только если шаблон убрать.",
-      "tiers": [
-        {
-          "maxAreaSqM": 50,
-          "breakers10a": 3,
-          "breakers16a": 8,
-          "breakers32a": 1,
-          "breakers50a": 1,
-          "rcd": 2,
-          "panelModules": "36"
-        },
-        {
-          "maxAreaSqM": 999,
-          "breakers10a": 5,
-          "breakers16a": 15,
-          "breakers32a": 1,
-          "breakers50a": 1,
-          "rcd": 3
-        }
-      ]
-    },
-    "panelSize": {
-      "thresholds": [
-        { "maxPoints": 55, "panelId": "panel-48" },
-        { "maxPoints": 75, "panelId": "panel-54" },
-        { "maxPoints": 95, "panelId": "panel-72" },
-        { "maxPoints": 999, "panelId": "panel-90" }
-      ]
-    },
     "largeProject": {
+      "comment": "Крупный объект: трёхфазный ввод (3 реле напряжения) и клеммы РБД вместо колодок.",
       "minOutlets": 70,
-      "rcdCount": 4,
       "voltageRelayQty": 3,
       "terminalBlocks": 7,
-      "panelModules": "90",
-      "cable25Multiplier": 1.33,
-      "pugnpMinPerLight": 4,
-      "conduitBonus": 50,
       "nailsPacks": 3,
       "clipsPacks": 30
     }
   },
-  "laborPerSqM": 6500,
+  "laborPerSqM": 7000,
   "laborRoundTo": 10000,
   "laborTiers": [
     {

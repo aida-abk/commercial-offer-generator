@@ -4,9 +4,11 @@ import {
   loadPanelBrands,
   loadPriceCatalog,
 } from "./catalog";
+import { buildCircuitPlan } from "./circuits";
 import type {
   BrandVariants,
   CalculationResult,
+  CircuitPlan,
   ExtractedProject,
   LineItem,
   MultiBrandCalculationResult,
@@ -67,59 +69,32 @@ function num(obj: unknown, key: string, fallback = 0): number {
   return typeof v === "number" ? v : fallback;
 }
 
+/**
+ * Объёмы материалов. Кабель, автоматы, УЗО и корпус щита приходят из покомнатного
+ * плана групп (src/lib/circuits.ts); расходники по-прежнему считаются от площади
+ * и числа точек.
+ */
 function computeQuantities(project: ExtractedProject) {
   const rules = loadCalculationRules();
   const f = rules.formulas;
   const r = rules.rounding;
-  const area = project.totalAreaSqM;
-  const outlets = project.outlets;
-  const switches = project.switches;
-  const lights = project.lightPoints;
-  const utp = project.utpPoints;
-  const warmFloor = project.warmFloorCircuits;
+  const g = rules.geometry;
+  const plan = buildCircuitPlan(project);
 
-  const cable2x15Raw =
-    num(f["cable2x1.5"], "base") + num(f["cable2x1.5"], "perLight") * lights;
+  const area =
+    project.totalAreaSqM > 0
+      ? project.totalAreaSqM
+      : plan.rooms.reduce((s, room) => s + room.areaSqM, 0);
 
-  const cable15Raw =
-    num(f["cable3x1.5"], "base") +
-    num(f["cable3x1.5"], "perSwitch") * switches +
-    num(f["cable3x1.5"], "perLight") * lights +
-    num(f["cable3x1.5"], "perAreaSqM") * area +
-    (area > 100 ? (area - 100) * num(f["cable3x1.5"], "largeAreaBonusPerSqM", 0) : 0);
+  const cable2x15 = plan.cableMeters["2x1.5"];
+  const cable15 = plan.cableMeters["3x1.5"];
+  const cable25 = plan.cableMeters["3x2.5"];
+  const cable6 = plan.cableMeters["3x6"];
+  const cableUtp = plan.cableMeters.utp;
 
-  const cable25Raw =
-    num(f["cable3x2.5"], "base") +
-    num(f["cable3x2.5"], "perOutlet") * outlets +
-    num(f["cable3x2.5"], "perAreaSqM") * area;
-
-  const cable6Raw =
-    num(f["cable3x6"], "base") +
-    num(f["cable3x6"], "perWarmFloor") * warmFloor +
-    num(f["cable3x6"], "fixed");
-
-  const cableUtpRaw =
-    num(f.cableUtp, "base") +
-    num(f.cableUtp, "perUtpPoint") * utp +
-    num(f.cableUtp, "perAreaSqM") * area +
-    (utp >= num(f.cableUtp, "largeProjectMinUtp", 999)
-      ? num(f.cableUtp, "largeProjectBonus", 0)
-      : 0);
-
-  const wirePugnpRaw =
-    num(f.wirePugnp, "base") + num(f.wirePugnp, "perLight") * lights;
-
-  const cable2x15 = roundNearest(cable2x15Raw, r.cableMeters);
-  const cable15 = roundNearest(cable15Raw, r.cableMeters);
-  let cable25 = roundNearest(cable25Raw, r.cableMeters);
-  const cable6Step = r.cable6Meters ?? 1;
-  const cable6 =
-    cable6Raw <= 30
-      ? Math.max(0, Math.round(cable6Raw))
-      : roundNearest(cable6Raw, cable6Step);
-  const cableUtp = roundNearest(cableUtpRaw, r.cableMeters);
+  // ПУГНП — временное освещение на время стройки.
   const pugnpStep = r.pugnpMeters ?? 10;
-  let wirePugnp = roundNearest(wirePugnpRaw, pugnpStep);
+  const wirePugnp = roundNearest(plan.tempBulbs * g.tempLightPerBulbM, pugnpStep);
 
   const mainCable = cable15 + cable25;
   const totalCable = cable2x15 + mainCable + cable6 + cableUtp + wirePugnp;
@@ -135,19 +110,21 @@ function computeQuantities(project: ExtractedProject) {
     mainCableRatio > 0
       ? mainCable * mainCableRatio + conduitBase
       : totalCable * conduitRatio;
-  let conduitPvc = useConduit ? roundNearest(conduitRaw, r.conduitMeters) : 0;
+  const conduitPvc = useConduit ? roundNearest(conduitRaw, r.conduitMeters) : 0;
   const conduitPnd = roundTo(totalCable * 0.35, r.conduitMeters);
 
   const socketBoxesRaw =
-    num(f.socketBoxes, "perOutlet") * outlets +
-    num(f.socketBoxes, "perSwitch") * switches +
+    num(f.socketBoxes, "perOutlet") * plan.socketPoints +
+    num(f.socketBoxes, "perSwitch") * plan.switchPoints +
     num(f.socketBoxes, "buffer");
   const socketBoxes = roundTo(socketBoxesRaw, r.countItems);
 
+  // Розетки идут без шлейфа — через распредкоробки, поэтому коробки считаются
+  // от числа групп и точек, а не от площади.
+  const wiredCircuits = plan.circuits.filter((c) => c.kind !== "utp").length;
   const junctionBoxesRaw =
-    num(f.junctionBoxes, "base") +
-    num(f.junctionBoxes, "perAreaSqM") * area +
-    num(f.junctionBoxes, "perSocketBox") * socketBoxes;
+    num(f.junctionBoxes, "perCircuit") * wiredCircuits +
+    num(f.junctionBoxes, "perPoint") * (plan.socketPoints + plan.lightPoints);
   const junctionBoxes = roundTo(junctionBoxesRaw, r.countItems);
 
   // С гофрой крепёж — клипсы, без гофры — площадка монтажного пистолета.
@@ -185,10 +162,8 @@ function computeQuantities(project: ExtractedProject) {
   const sleeveGml10 = sleeveQty("gml10");
   const sleeveGml16 = sleeveQty("gml16");
 
-  const bulbs = Math.max(
-    roundTo(num(f.bulbs, "perLight") * lights, r.countItems),
-    num(f.bulbs, "min"),
-  );
+  // Временные лампочки — 3–4 на комнату.
+  const bulbs = Math.max(plan.tempBulbs, num(f.bulbs, "min"));
 
   const trashBags = Math.max(
     roundTo(num(f.trashBags, "perAreaSqM") * area, r.countItems),
@@ -200,123 +175,29 @@ function computeQuantities(project: ExtractedProject) {
     num(f.tape, "min"),
   );
 
-  const lightGroups = Math.max(1, Math.ceil(lights / 8));
-  const outletGroups = Math.max(1, Math.ceil(outlets / 6));
-
-  type PanelTemplateTier = { maxAreaSqM: number; panelModules?: string };
-  const template = (
-    f.panelTemplate as { tiers?: PanelTemplateTier[] } | undefined
-  )?.tiers?.find((t) => area <= t.maxAreaSqM);
-
-  let breakers10 = template
-    ? num(template, "breakers10a")
-    : num(f.breakers10a, "base") + num(f.breakers10a, "perLightGroup") * lightGroups;
-  let breakers16 = template
-    ? num(template, "breakers16a")
-    : num(f.breakers16a, "base") + num(f.breakers16a, "perOutletGroup") * outletGroups;
-  let breakers32 = template ? num(template, "breakers32a") : num(f.breakers32a, "fixed");
-  let breakers50 = template ? num(template, "breakers50a") : num(f.breakers50a, "fixed");
-
-  if (project.estimatedCircuits?.length) {
-    breakers10 = 0;
-    breakers16 = 0;
-    breakers32 = 0;
-    breakers50 = 0;
-    for (const c of project.estimatedCircuits) {
-      if (c.amps === 10) breakers10 += c.count;
-      else if (c.amps === 16) breakers16 += c.count;
-      else if (c.amps === 32) breakers32 += c.count;
-      else if (c.amps === 50) breakers50 += c.count;
-    }
-  }
-
-  breakers10 = roundTo(breakers10, 1);
-  breakers16 = roundTo(breakers16, 1);
-  breakers32 = roundTo(breakers32, 1);
-  breakers50 = roundTo(breakers50, 1);
-
-  const rcdCount = template
-    ? num(template, "rcd")
-    : Math.min(
-        Math.max(Math.round(num(f.rcd, "perAreaSqM") * area), num(f.rcd, "min")),
-        num(f.rcd, "max"),
-      );
-
-  const fixed = rules.fixedItems;
-  const fixedModuleCount = Object.values(fixed).reduce((sum, n) => sum + n, 0);
-  const totalPoints =
-    breakers10 +
-    breakers16 +
-    breakers32 +
-    breakers50 +
-    rcdCount +
-    fixedModuleCount;
-
-  const panelSize = f.panelSize as {
-    thresholds: { maxPoints: number; panelId: string }[];
-  };
-  const panelSizeKey =
-    panelSize.thresholds.find((t) => totalPoints <= t.maxPoints)?.panelId ??
-    panelSize.thresholds[panelSize.thresholds.length - 1]?.panelId ??
-    "panel-48";
-
-  const panelModules =
-    panelSizeKey.includes("90")
-      ? "90"
-      : panelSizeKey.includes("72")
-        ? "72"
-        : panelSizeKey.includes("54")
-          ? "54"
-          : "48";
-
   const largeProjectRule = f.largeProject as
     | {
         minOutlets?: number;
-        rcdCount?: number;
         voltageRelayQty?: number;
         terminalBlocks?: number;
-        panelModules?: string;
-        cable25Multiplier?: number;
-        pugnpMinPerLight?: number;
-        conduitBonus?: number;
         nailsPacks?: number;
         clipsPacks?: number;
       }
     | undefined;
-  const isLargeProject = outlets >= (largeProjectRule?.minOutlets ?? Number.MAX_SAFE_INTEGER);
+  const isLargeProject =
+    plan.socketPoints >= (largeProjectRule?.minOutlets ?? Number.MAX_SAFE_INTEGER);
 
   let voltageRelayQty = 1;
   let terminalBlockCount = 0;
-  let resolvedPanelModules = template?.panelModules ?? panelModules;
-  let resolvedRcdCount = rcdCount;
-
   if (isLargeProject && largeProjectRule) {
-    resolvedRcdCount = largeProjectRule.rcdCount ?? resolvedRcdCount;
     voltageRelayQty = largeProjectRule.voltageRelayQty ?? 3;
     terminalBlockCount = largeProjectRule.terminalBlocks ?? 0;
-    resolvedPanelModules = largeProjectRule.panelModules ?? resolvedPanelModules;
-    if (largeProjectRule.cable25Multiplier) {
-      cable25 = roundNearest(cable25 * largeProjectRule.cable25Multiplier, r.cableMeters);
-    }
-    if (largeProjectRule.pugnpMinPerLight) {
-      wirePugnp = roundNearest(
-        Math.max(wirePugnp, lights * largeProjectRule.pugnpMinPerLight),
-        pugnpStep,
-      );
-    }
-    if (largeProjectRule.conduitBonus) {
-      conduitPvc = roundNearest(conduitPvc + largeProjectRule.conduitBonus, r.conduitMeters);
-    }
-  }
-
-  if (isLargeProject && largeProjectRule?.nailsPacks) {
-    nails = largeProjectRule.nailsPacks;
-  }
-  if (isLargeProject && largeProjectRule?.clipsPacks) {
-    clips = largeProjectRule.clipsPacks;
+    if (largeProjectRule.nailsPacks) nails = largeProjectRule.nailsPacks;
+    if (largeProjectRule.clipsPacks && useConduit) clips = largeProjectRule.clipsPacks;
   }
 
   return {
+    plan,
     cable2x15,
     cable15,
     cable25,
@@ -339,16 +220,17 @@ function computeQuantities(project: ExtractedProject) {
     bulbs,
     trashBags,
     tape,
-    breakers10,
-    breakers16,
-    breakers32,
-    breakers50,
-    rcdCount: resolvedRcdCount,
-    panelModules: resolvedPanelModules,
+    breakers10: plan.breakers10a,
+    breakers16: plan.breakers16a,
+    breakers32: plan.breakers32a,
+    // Вводной автомат 2п 63А.
+    breakers50: plan.inputBreakers,
+    rcdCount: plan.rcdCount,
+    panelModules: String(plan.panelSize),
     voltageRelayQty,
     terminalBlockCount,
     isLargeProject,
-    fixed,
+    fixed: rules.fixedItems,
   };
 }
 
@@ -480,7 +362,12 @@ export function calculateAllVariants(
     };
   }
 
-  return { labor, materials, laborPrice, variants };
+  return { labor, materials, laborPrice, variants, plan: q.plan };
+}
+
+/** План групп по комнатам — для отображения в КП и на экране подтверждения. */
+export function planForProject(project: ExtractedProject): CircuitPlan {
+  return buildCircuitPlan(project);
 }
 
 export function calculateOffer(
@@ -496,6 +383,7 @@ export function calculateOffer(
     panel: variant.panel,
     grandTotal: variant.totalAmount,
     laborPrice: all.laborPrice,
+    plan: all.plan,
   };
 }
 
