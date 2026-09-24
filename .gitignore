@@ -12,3 +12,7 @@ app.root-placeholder.bak/
 /*.arr
 /etc/
 scripts/benchmark-last-run.txt
+
+# примеры проектов — нужны локально для калибровки, в репозиторий не кладём
+Примеры КП/
+*.pdf
