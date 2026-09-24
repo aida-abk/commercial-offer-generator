@@ -68,7 +68,12 @@ export default function AdminPricesPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Прайс-лист материалов</h1>
         <p className="mt-1 text-slate-600">
-          Редактирование цен в <code className="text-xs">config/price-catalog.json</code>
+          Цены сохраняются на сервере, а не в браузере: после кнопки «Сохранить прайс» они
+          действуют для всех, кто пользуется этим сайтом, и переживают перезапуск.
+        </p>
+        <p className="mt-1 text-sm text-slate-500">
+          По новым ценам считаются новые КП. Уже сохранённые КП не пересчитываются — откройте
+          нужное и поправьте цены в нём.
         </p>
       </div>
 

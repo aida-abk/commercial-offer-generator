@@ -1,0 +1,19 @@
+# Локальная проверка образа и запуск на обычном VPS.
+#   docker compose up -d --build
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      APP_PASSWORD: ${APP_PASSWORD}
+      OPENAI_PAGES_PER_REQUEST: ${OPENAI_PAGES_PER_REQUEST:-3}
+      OPENAI_TPM_BUDGET: ${OPENAI_TPM_BUDGET:-9000}
+    volumes:
+      # Здесь живут база КП и прайс — переживают пересборку образа.
+      - kp-data:/data
+    restart: unless-stopped
+
+volumes:
+  kp-data:

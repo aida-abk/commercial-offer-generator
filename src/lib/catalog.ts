@@ -1,12 +1,39 @@
 import path from "path";
-import { readFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import type { CalculationRules, CatalogItem, PriceCatalog } from "./types";
 
 const configDir = path.join(process.cwd(), "config");
 
+/**
+ * Папка изменяемых данных. На сервере она лежит на отдельном томе (DATA_DIR),
+ * иначе обновление кода затирает цены, правленные через админку.
+ * Локально, когда DATA_DIR не задан, всё остаётся в config/ как раньше.
+ */
+const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : configDir;
+
+/** Файлы, которые правятся из интерфейса и потому живут в DATA_DIR. */
+const MUTABLE_FILES = new Set(["price-catalog.json"]);
+
+function resolveConfigPath(fileName: string): string {
+  if (!MUTABLE_FILES.has(fileName) || dataDir === configDir) {
+    return path.join(configDir, fileName);
+  }
+  const target = path.join(dataDir, fileName);
+  // Первый запуск на чистом томе: кладём эталон из репозитория.
+  if (!existsSync(target)) {
+    mkdirSync(dataDir, { recursive: true });
+    copyFileSync(path.join(configDir, fileName), target);
+  }
+  return target;
+}
+
+/** Путь к прайсу — им же пользуется админка при сохранении. */
+export function priceCatalogPath(): string {
+  return resolveConfigPath("price-catalog.json");
+}
+
 function readJson<T>(fileName: string): T {
-  const filePath = path.join(configDir, fileName);
-  const raw = readFileSync(filePath, "utf-8");
+  const raw = readFileSync(resolveConfigPath(fileName), "utf-8");
   return JSON.parse(raw) as T;
 }
 

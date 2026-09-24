@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env
+*.pdf
+*.jpeg
+*.arr
+prisma/dev.db
+etc/
+Примеры КП/
+scripts/benchmark-last-run.txt
+.DS_Store
