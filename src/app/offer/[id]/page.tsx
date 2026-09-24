@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { formatTenge } from "@/lib/format";
+import { formatMeasure, formatTenge } from "@/lib/format";
 import type {
   AnalyzedPdfPage,
   BrandVariants,
+  CircuitPlan,
+  ExtractedProject,
   LineItem,
   OfferSections,
   PanelBrandId,
@@ -32,6 +34,8 @@ interface OfferPayload {
   id: string;
   projectName: string;
   clientName: string;
+  sourceFileName: string;
+  extractedData: ExtractedProject;
   laborPrice: number;
   lineItems: OfferSections;
   brandVariants: BrandVariants;
@@ -259,6 +263,82 @@ function EditableSection({
   );
 }
 
+
+const CIRCUIT_KIND_LABELS: Record<string, string> = {
+  light: "Освещение",
+  socket: "Розетки",
+  kitchenHob: "Варочная поверхность",
+  kitchenFridge: "Холодильник",
+  kitchenOven: "Духовой шкаф + СВЧ",
+  kitchenSockets: "Розетки кухни",
+  airCon: "Кондиционер",
+  leakSensor: "Датчик протечки",
+  warmFloor: "Тёплый пол",
+  utp: "UTP",
+};
+
+/** Из чего сложилась смета: группы по комнатам и состав щита. */
+function CircuitPlanSection({ plan }: { plan: CircuitPlan }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <span>
+          <span className="text-sm font-semibold text-slate-800">Группы и щит</span>
+          <span className="ml-2 text-xs text-slate-500">
+            {plan.circuits.length} линий · автоматы 10А {plan.breakers10a} / 16А {plan.breakers16a} /
+            32А {plan.breakers32a} · УЗО {plan.rcdCount} · корпус {plan.panelSize} мод.
+            (по факту {plan.panelModules} + запас)
+          </span>
+        </span>
+        <span className="text-xs text-slate-400">{open ? "свернуть" : "показать"}</span>
+      </button>
+
+      {open && (
+        <div className="overflow-x-auto border-t border-slate-100">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-xs text-slate-600">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">Группа</th>
+                <th className="px-3 py-2 text-left font-medium">Помещение</th>
+                <th className="px-3 py-2 text-center font-medium">Автомат</th>
+                <th className="px-3 py-2 text-center font-medium">Кабель</th>
+                <th className="px-3 py-2 text-right font-medium">Длина, м</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {plan.circuits.map((c, i) => (
+                <tr key={`${c.label}-${i}`}>
+                  <td className="px-3 py-1.5">{CIRCUIT_KIND_LABELS[c.kind] ?? c.kind}</td>
+                  <td className="px-3 py-1.5 text-slate-600">{c.roomName ?? "—"}</td>
+                  <td className="px-3 py-1.5 text-center">
+                    {c.breakerAmps ? `${c.breakerAmps}А` : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-center text-slate-600">
+                    {c.cableType === "utp" ? "UTP" : `ВВГнг ${c.cableType.replace("x", "*")}`}
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {formatMeasure(c.cableMeters)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="px-4 py-3 text-xs text-slate-500">
+            Длины указаны до запаса на срезы; в смету кабель входит с запасом и округлением.
+            Временных лампочек — {plan.tempBulbs} шт.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function OfferEditorPage() {
   const params = useParams();
   const id = params.id as string;
@@ -267,8 +347,10 @@ export default function OfferEditorPage() {
   const [materials, setMaterials] = useState<LineItem[]>([]);
   const [brandVariants, setBrandVariants] = useState<BrandVariants | null>(null);
   const [activeBrand, setActiveBrand] = useState<PanelBrandId>("schneider-easy9");
+  const [plan, setPlan] = useState<CircuitPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -294,6 +376,22 @@ export default function OfferEditorPage() {
       setMaterials(data.lineItems.materials);
       setBrandVariants(data.brandVariants);
       setActiveBrand(data.activeBrand ?? "schneider-easy9");
+
+      // План групп не хранится в КП — пересчитывается из данных проекта,
+      // чтобы показать, из чего сложились автоматы и метраж кабеля.
+      if (data.extractedData) {
+        try {
+          const calcRes = await fetch("/api/calculate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data.extractedData),
+          });
+          const calcData = await calcRes.json();
+          setPlan((calcData.plan as CircuitPlan) ?? null);
+        } catch {
+          setPlan(null);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка загрузки");
     } finally {
@@ -389,7 +487,7 @@ export default function OfferEditorPage() {
 
   async function handleDownloadPdf(brand: PanelBrandId) {
     if (!brandVariants || !offer) return;
-    setSaving(true);
+    setDownloading(true);
     setMessage(null);
     setError(null);
 
@@ -425,10 +523,11 @@ export default function OfferEditorPage() {
         `/api/generate-pdf?id=${encodeURIComponent(id)}&brand=${encodeURIComponent(brand)}`,
         "_blank",
       );
+      setMessage("Правки сохранены, PDF открылся в новой вкладке.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка перед PDF");
     } finally {
-      setSaving(false);
+      setDownloading(false);
     }
   }
 
@@ -458,6 +557,10 @@ export default function OfferEditorPage() {
           {offer.clientName && (
             <p className="text-slate-600">Заказчик: {offer.clientName}</p>
           )}
+          <p className="text-sm text-slate-500">
+            Площадь: {offer.extractedData ? formatMeasure(offer.extractedData.totalAreaSqM) : "—"} м²
+            {offer.sourceFileName ? ` · файл: ${offer.sourceFileName}` : " · ручной ввод"}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -487,7 +590,13 @@ export default function OfferEditorPage() {
         </section>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      {plan && <CircuitPlanSection plan={plan} />}
+
+      <div>
+        <p className="mb-2 text-sm font-medium text-slate-700">
+          Вариант щита — выберите бренд, по нему считается итог и выгружается PDF:
+        </p>
+        <div className="flex flex-wrap gap-2">
         {(Object.keys(BRAND_LABELS) as PanelBrandId[]).map((brand) => (
           <button
             key={brand}
@@ -505,20 +614,22 @@ export default function OfferEditorPage() {
             </span>
           </button>
         ))}
+        </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {(Object.keys(BRAND_LABELS) as PanelBrandId[]).map((brand) => (
-          <button
-            key={`pdf-${brand}`}
-            type="button"
-            onClick={() => void handleDownloadPdf(brand)}
-            disabled={saving}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {saving ? "Сохранение…" : `PDF — ${BRAND_LABELS[brand]}`}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <button
+          type="button"
+          onClick={() => void handleDownloadPdf(activeBrand)}
+          disabled={downloading || saving}
+          className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {downloading ? "Готовим PDF…" : `Скачать КП в PDF — ${BRAND_LABELS[activeBrand]}`}
+        </button>
+        <span className="text-xs text-slate-500">
+          Выгружается вариант выбранного бренда. Правки сохраняются автоматически перед
+          скачиванием, файл откроется в новой вкладке.
+        </span>
       </div>
 
       {message && (

@@ -2,10 +2,17 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { DecimalInput } from "@/components/DecimalInput";
 import { ExtractionProgressBar } from "@/components/ExtractionProgressBar";
-import { formatTenge } from "@/lib/format";
-import type { ExtractCompleteEvent, ExtractStreamEvent } from "@/lib/extract-progress";
-import type { AnalyzedPdfPage, ExtractedProject } from "@/lib/types";
+import { RoomsEditor } from "@/components/RoomsEditor";
+import { formatMeasure, formatTenge } from "@/lib/format";
+import { aggregateRooms, synthesizeRooms } from "@/lib/rooms";
+import type {
+  ExtractCompleteEvent,
+  ExtractStreamEvent,
+  ExtractUsageSummary,
+} from "@/lib/extract-progress";
+import type { AnalyzedPdfPage, ExtractedProject, Room } from "@/lib/types";
 
 type WizardStep = "form" | "processing" | "confirm" | "done";
 
@@ -19,6 +26,7 @@ interface DraftPayload {
   analyzedPages?: AnalyzedPdfPage[];
   variants?: Record<string, VariantSummary>;
   sourceFileName?: string;
+  usage?: ExtractUsageSummary;
 }
 
 /** Совпадает с conduit.includeAboveAreaSqM в config/calculation-rules.json. */
@@ -92,6 +100,8 @@ export default function HomePage() {
   const [confirmClientName, setConfirmClientName] = useState("");
   const [confirmArea, setConfirmArea] = useState(90);
   const [confirmUseConduit, setConfirmUseConduit] = useState(false);
+  const [confirmRooms, setConfirmRooms] = useState<Room[]>([]);
+  const [confirmLeakSensor, setConfirmLeakSensor] = useState(true);
 
   const [offerId, setOfferId] = useState<string | null>(null);
   const [variants, setVariants] = useState<Record<string, VariantSummary> | null>(null);
@@ -118,6 +128,8 @@ export default function HomePage() {
           ...base,
           totalAreaSqM: confirmArea,
           useConduit: confirmUseConduit,
+          rooms: confirmRooms,
+          leakSensor: confirmLeakSensor,
           notes: base.notes ?? [],
         }),
         signal: controller.signal,
@@ -142,7 +154,7 @@ export default function HomePage() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [step, confirmArea, confirmUseConduit]);
+  }, [step, confirmArea, confirmUseConduit, confirmRooms, confirmLeakSensor]);
 
   function startElapsedTimer() {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -160,11 +172,21 @@ export default function HomePage() {
   }
 
   function openConfirmFromDraft(payload: DraftPayload) {
-    const area = payload.extracted.totalAreaSqM || 90;
+    // Площадь не подставляем: если из проекта её взять не удалось, поле остаётся
+    // пустым и КП не сформируется, пока её не укажут.
+    const area = payload.extracted.totalAreaSqM || 0;
     setDraft(payload);
     setConfirmProjectName(payload.extracted.projectName || "");
     setConfirmClientName(payload.extracted.clientName || "");
     setConfirmArea(area);
+    // Из дизайн-проекта комнаты приходят готовыми; при ручном вводе состав
+    // восстанавливается по площади и правится в таблице.
+    setConfirmRooms(
+      payload.extracted.rooms && payload.extracted.rooms.length > 0
+        ? payload.extracted.rooms
+        : synthesizeRooms({ ...payload.extracted, totalAreaSqM: area || 60 }),
+    );
+    setConfirmLeakSensor(payload.extracted.leakSensor !== false);
     setConfirmUseConduit(
       payload.extracted.useConduit ?? area > CONDUIT_DEFAULT_AREA_SQM,
     );
@@ -220,6 +242,7 @@ export default function HomePage() {
         analyzedPages: complete.analyzedPages,
         variants: complete.variants,
         sourceFileName: complete.sourceFileName,
+        usage: complete.usage,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Неизвестная ошибка");
@@ -276,12 +299,22 @@ export default function HomePage() {
     setError(null);
     setLoading(true);
 
+    const roomTotals = aggregateRooms(confirmRooms);
     const extractedData: ExtractedProject = {
       ...draft.extracted,
       projectName: confirmProjectName.trim(),
       clientName: confirmClientName.trim(),
       totalAreaSqM: confirmArea,
       useConduit: confirmUseConduit,
+      rooms: confirmRooms,
+      leakSensor: confirmLeakSensor,
+      // Агрегаты держим в соответствии с таблицей помещений.
+      outlets: roomTotals.outlets,
+      switches: roomTotals.switches,
+      lightPoints: roomTotals.lightPoints,
+      utpPoints: roomTotals.utpPoints,
+      warmFloorCircuits: roomTotals.warmFloorCircuits,
+      airConditioners: roomTotals.airConditioners,
     };
 
     try {
@@ -334,6 +367,9 @@ export default function HomePage() {
   function goToOffer() {
     if (offerId) router.push(`/offer/${offerId}`);
   }
+
+  // Сводка по таблице помещений — показывается на шаге подтверждения.
+  const roomTotals = aggregateRooms(confirmRooms);
 
   return (
     <div className="space-y-8">
@@ -437,9 +473,37 @@ export default function HomePage() {
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Данные проекта</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Проверьте и укажите название, заказчика и площадь — после этого будет сформировано КП.
+              Всё уже заполнено из проекта — править ничего не обязательно. Впишите название
+              КП и нажмите «Сформировать КП». Таблица ниже нужна, чтобы при желании сверить
+              количества: AI считает значки на планах и может ошибиться на одну-две точки.
             </p>
           </div>
+
+          {draft.sourceFileName && (
+            <p className="rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-600">
+              Источник: <span className="font-medium text-slate-800">{draft.sourceFileName}</span>
+              {draft.usage && (
+                <span className="block text-xs text-slate-500">
+                  Распознавание: {draft.usage.totalTokens.toLocaleString("ru-RU")} токенов за{" "}
+                  {draft.usage.requests} запрос(ов) ≈ ${draft.usage.costUsd.toFixed(2)}
+                </span>
+              )}
+            </p>
+          )}
+
+          {draft.extracted.areaSource === "unknown" && (
+            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+              Общую площадь в проекте найти не удалось — укажите её вручную в поле ниже.
+              Без площади не посчитать ни работы, ни расходники.
+            </p>
+          )}
+
+          {draft.extracted.areaSource === "rooms" && (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              Общая площадь в проекте не указана явно — сложена из площадей помещений
+              ({formatMeasure(draft.extracted.totalAreaSqM)} м²). Проверьте цифру.
+            </p>
+          )}
 
           {draft.analyzedPages && draft.analyzedPages.filter((p) => p.selected).length > 0 && (
             <div className="rounded-lg bg-amber-50 p-3 text-sm">
@@ -456,19 +520,23 @@ export default function HomePage() {
             </div>
           )}
 
-          <dl className="grid gap-3 rounded-lg bg-slate-50 p-4 text-sm sm:grid-cols-3">
+          <dl className="grid gap-3 rounded-lg bg-slate-50 p-4 text-sm sm:grid-cols-4">
+            <div>
+              <dt className="text-slate-500">Помещений</dt>
+              <dd className="font-semibold">{confirmRooms.length}</dd>
+            </div>
             <div>
               <dt className="text-slate-500">Розетки</dt>
-              <dd className="font-semibold">{draft.extracted.outlets}</dd>
+              <dd className="font-semibold">{roomTotals.outlets}</dd>
             </div>
             <div>
               <dt className="text-slate-500">Выключатели</dt>
-              <dd className="font-semibold">{draft.extracted.switches}</dd>
+              <dd className="font-semibold">{roomTotals.switches}</dd>
             </div>
             <div>
               <dt className="text-slate-500">Свет / UTP</dt>
               <dd className="font-semibold">
-                {draft.extracted.lightPoints} / {draft.extracted.utpPoints}
+                {roomTotals.lightPoints} / {roomTotals.utpPoints}
               </dd>
             </div>
           </dl>
@@ -501,14 +569,31 @@ export default function HomePage() {
               <span className="text-sm font-medium text-slate-700">
                 Площадь, м² <span className="text-red-500">*</span>
               </span>
-              <input
-                type="number"
-                required
-                min={1}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              {/* Площадь бывает дробной (86,4 м²), поэтому поле текстовое:
+                  type="number" в браузере с английской локалью выбрасывает
+                  запятую и превращает 86,4 в 864. */}
+              <DecimalInput
                 value={confirmArea}
-                onChange={(e) => setConfirmArea(Number(e.target.value) || 0)}
+                onChange={setConfirmArea}
+                placeholder="86,4"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               />
+            </label>
+            <label className="flex items-start gap-3 sm:col-span-3">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 rounded border-slate-300"
+                checked={confirmLeakSensor}
+                onChange={(e) => setConfirmLeakSensor(e.target.checked)}
+              />
+              <span className="text-sm">
+                <span className="font-medium text-slate-700">
+                  Датчик протечки воды («Нептун»)
+                </span>
+                <span className="block text-xs text-slate-500">
+                  Отдельная группа от щита: автомат 16А и кабель ВВГнг 3*2,5.
+                </span>
+              </span>
             </label>
             <label className="flex items-start gap-3 sm:col-span-3">
               <input
@@ -527,6 +612,8 @@ export default function HomePage() {
               </span>
             </label>
           </div>
+
+          <RoomsEditor rooms={confirmRooms} onChange={setConfirmRooms} />
 
           {draft.variants && (
             <div className="grid gap-3 sm:grid-cols-3">
@@ -582,7 +669,11 @@ export default function HomePage() {
             </div>
             <div>
               <dt className="text-xs uppercase tracking-wide text-slate-500">Площадь</dt>
-              <dd className="font-medium">{confirmArea} м²</dd>
+              <dd className="font-medium">{formatMeasure(confirmArea)} м²</dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-slate-500">Файл проекта</dt>
+              <dd className="font-medium break-all">{draft?.sourceFileName || "— (ручной ввод)"}</dd>
             </div>
           </dl>
 

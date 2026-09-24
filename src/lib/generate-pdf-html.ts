@@ -1,6 +1,6 @@
 import { loadCompanyBoilerplate } from "./catalog";
 import { getCompanyLogoDataUri } from "./company-logo";
-import { formatTenge } from "./format";
+import { formatQuantity, formatTenge } from "./format";
 import type { CompanyBoilerplate, LineItem, OfferSections } from "./types";
 
 export interface GeneratePdfHtmlInput {
@@ -45,8 +45,8 @@ function renderTable(
         <td>${escapeHtml(row.name)}</td>
         ${
           layout === "labor"
-            ? `<td>${escapeHtml(row.unit)}</td><td class="num">${row.quantity.toFixed(2).replace(".", ",")}</td>`
-            : `<td class="num">${row.quantity.toFixed(2).replace(".", ",")}</td><td>${escapeHtml(row.unit)}</td>`
+            ? `<td>${escapeHtml(row.unit)}</td><td class="num">${formatQuantity(row.quantity)}</td>`
+            : `<td class="num">${formatQuantity(row.quantity)}</td><td>${escapeHtml(row.unit)}</td>`
         }
         <td class="num">${formatTenge(row.unitPrice)}</td>
         <td class="num">${formatTenge(row.total)}</td>

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOffer, updateOffer } from "@/lib/offer-store";
+import { deleteOffer, getOffer, updateOffer } from "@/lib/offer-store";
 import type { OfferRecord, OfferSections } from "@/lib/types";
 
 function serializeOffer(offer: OfferRecord) {
@@ -42,4 +42,13 @@ export async function PATCH(request: Request, context: RouteContext) {
     const message = err instanceof Error ? err.message : "Ошибка обновления";
     return NextResponse.json({ error: message }, { status: 400 });
   }
+}
+
+export async function DELETE(_request: Request, context: RouteContext) {
+  const { id } = await context.params;
+  const removed = await deleteOffer(id);
+  if (!removed) {
+    return NextResponse.json({ error: "КП не найдено" }, { status: 404 });
+  }
+  return NextResponse.json({ ok: true });
 }

@@ -17,6 +17,26 @@ export default function OffersPage() {
   const [offers, setOffers] = useState<OfferListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function handleDelete(offer: OfferListItem) {
+    const confirmed = window.confirm(
+      `Удалить КП «${offer.projectName}»? Восстановить его будет нельзя.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingId(offer.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/offers/${offer.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Не удалось удалить КП");
+      setOffers((prev) => prev.filter((o) => o.id !== offer.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка удаления");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -44,7 +64,10 @@ export default function OffersPage() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Сохранённые КП</h1>
-          <p className="mt-1 text-slate-600">Все сформированные коммерческие предложения.</p>
+          <p className="mt-1 text-slate-600">
+            Каждое сформированное КП сохраняется здесь автоматически. Откройте его, чтобы
+            поправить количества и цены и заново скачать PDF — правки остаются в той же записи.
+          </p>
         </div>
         <Link
           href="/"
@@ -68,10 +91,10 @@ export default function OffersPage() {
 
       <ul className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         {offers.map((offer) => (
-          <li key={offer.id}>
+          <li key={offer.id} className="flex items-center gap-2 pr-3 transition hover:bg-slate-50">
             <Link
               href={`/offer/${offer.id}`}
-              className="flex flex-col gap-2 px-5 py-4 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"
+              className="flex flex-1 flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
             >
               <div>
                 <p className="font-semibold text-slate-900">{offer.projectName}</p>
@@ -89,6 +112,15 @@ export default function OffersPage() {
                 </p>
               </div>
             </Link>
+            <button
+              type="button"
+              onClick={() => void handleDelete(offer)}
+              disabled={deletingId === offer.id}
+              title="Удалить КП"
+              className="shrink-0 rounded-md px-2 py-1 text-sm text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+            >
+              {deletingId === offer.id ? "…" : "Удалить"}
+            </button>
           </li>
         ))}
       </ul>
