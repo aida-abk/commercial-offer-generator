@@ -12,11 +12,14 @@
     "postinstall": "prisma generate && node scripts/ensure-chrome.mjs || true",
     "validate": "tsx scripts/validate-calculator.ts",
     "benchmark": "tsx scripts/benchmark-kp-examples.ts",
-    "compare:sofia": "tsx scripts/compare-sofia.ts"
+    "compare:sofia": "tsx scripts/compare-sofia.ts",
+    "calibrate": "tsx scripts/calibrate-materials.ts",
+    "debug:plan": "tsx scripts/debug-plan.ts",
+    "debug:panels": "tsx scripts/debug-panels.ts",
+    "debug:extract": "tsx --env-file=.env scripts/debug-extract.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
-    "canvas": "^3.2.3",
     "next": "^15.2.0",
     "openai": "^4.86.0",
     "pdf-lib": "^1.17.1",

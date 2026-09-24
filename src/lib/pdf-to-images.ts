@@ -1,3 +1,5 @@
+import fs from "fs";
+import os from "os";
 import path from "path";
 
 export interface PdfPageImage {
@@ -14,124 +16,133 @@ export interface PdfToImagesOptions {
   pageNumbers?: number[];
 }
 
-type CanvasModule = {
-  createCanvas: (width: number, height: number) => {
-    getContext: (type: "2d") => unknown;
-    toBuffer: (mime: string) => Buffer;
-  };
-};
+const PDFJS_DIR = path.join(process.cwd(), "node_modules/pdfjs-dist/build");
 
 async function loadPdfJs() {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const workerSrc = path.join(
+  pdfjs.GlobalWorkerOptions.workerSrc = path.join(
     process.cwd(),
     "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
   );
-  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
   return pdfjs;
 }
 
-async function tryLoadCanvas(): Promise<CanvasModule | null> {
-  try {
-    const mod = (await import(
-      /* webpackIgnore: true */ "canvas"
-    )) as unknown as CanvasModule;
-    return mod;
-  } catch {
-    return null;
-  }
-}
-
-async function renderWithPdfJs(
+/** Какие страницы рендерить: явный список или первые maxPages. */
+async function resolvePageNumbers(
   pdfBuffer: Buffer,
   options: PdfToImagesOptions,
-): Promise<PdfPageImage[]> {
+): Promise<number[]> {
   const pdfjs = await loadPdfJs();
-  const canvasLib = await tryLoadCanvas();
-  if (!canvasLib) {
-    throw new Error(
-      "Native canvas module not installed; use Puppeteer fallback for PDF rendering.",
-    );
+  const pdf = await pdfjs.getDocument({
+    data: new Uint8Array(pdfBuffer),
+    useSystemFonts: true,
+  }).promise;
+  const numPages = pdf.numPages;
+  await pdf.destroy();
+
+  if (options.pageNumbers?.length) {
+    return options.pageNumbers.filter((n) => n >= 1 && n <= numPages);
   }
-
-  const data = new Uint8Array(pdfBuffer);
-  const loadingTask = pdfjs.getDocument({ data, useSystemFonts: true });
-  const pdf = await loadingTask.promise;
-  const scale = options.scale ?? 2;
-
-  const pagesToRender =
-    options.pageNumbers?.length && options.pageNumbers.length > 0
-      ? options.pageNumbers.filter((n) => n >= 1 && n <= pdf.numPages)
-      : Array.from(
-          { length: Math.min(options.maxPages ?? 15, pdf.numPages) },
-          (_, i) => i + 1,
-        );
-
-  const images: PdfPageImage[] = [];
-
-  for (const pageNumber of pagesToRender) {
-    const page = await pdf.getPage(pageNumber);
-    const viewport = page.getViewport({ scale });
-    const canvas = canvasLib.createCanvas(viewport.width, viewport.height);
-    const context = canvas.getContext("2d");
-    await page.render({
-      canvasContext: context as never,
-      viewport,
-    }).promise;
-    const pngBuffer = canvas.toBuffer("image/png");
-    images.push({
-      pageNumber,
-      mimeType: "image/png",
-      base64: pngBuffer.toString("base64"),
-      width: viewport.width,
-      height: viewport.height,
-    });
-  }
-
-  return images;
+  return Array.from({ length: Math.min(options.maxPages ?? 12, numPages) }, (_, i) => i + 1);
 }
 
-async function renderWithPuppeteer(
+const RENDER_PAGE_HTML = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head><body style="margin:0">
+<script type="module">
+  import * as pdfjs from "./pdf.min.mjs";
+  pdfjs.GlobalWorkerOptions.workerSrc = "./pdf.worker.min.mjs";
+  window.renderPages = async (pageNumbers, scale) => {
+    const doc = await pdfjs.getDocument({ url: "./doc.pdf" }).promise;
+    const out = [];
+    for (const pageNumber of pageNumbers) {
+      const page = await doc.getPage(pageNumber);
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: context, viewport }).promise;
+      out.push({
+        pageNumber,
+        dataUrl: canvas.toDataURL("image/png"),
+        width: canvas.width,
+        height: canvas.height,
+      });
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    return out;
+  };
+  window.pdfReady = true;
+</script>
+</body></html>`;
+
+/**
+ * Рендер страниц в Chrome: pdf.js исполняется на странице, где есть настоящий
+ * canvas. Нативные canvas-биндинги в Node с pdf.js 4 не работают — node-canvas
+ * падает на inline-картинках, @napi-rs/canvas роняет процесс.
+ */
+async function renderInChrome(
   pdfBuffer: Buffer,
-  options: PdfToImagesOptions,
+  pageNumbers: number[],
+  scale: number,
 ): Promise<PdfPageImage[]> {
   const { launchBrowser } = await import("./puppeteer-browser");
-  const browser = await launchBrowser();
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "kp-pdf-render-"));
 
   try {
-    const page = await browser.newPage();
-    const b64 = pdfBuffer.toString("base64");
-    await page.setContent(
-      `<!DOCTYPE html><html><body style="margin:0"><embed type="application/pdf" src="data:application/pdf;base64,${b64}" width="100%" height="100%" /></body></html>`,
-      { waitUntil: "load" },
+    fs.copyFileSync(path.join(PDFJS_DIR, "pdf.min.mjs"), path.join(workDir, "pdf.min.mjs"));
+    fs.copyFileSync(
+      path.join(PDFJS_DIR, "pdf.worker.min.mjs"),
+      path.join(workDir, "pdf.worker.min.mjs"),
     );
-    await page.setViewport({ width: 1200, height: 1600, deviceScaleFactor: 2 });
-    const screenshot = await page.screenshot({ type: "png", fullPage: true });
-    const buf = Buffer.isBuffer(screenshot) ? screenshot : Buffer.from(screenshot);
-    const image: PdfPageImage = {
-      pageNumber: 1,
-      mimeType: "image/png",
-      base64: buf.toString("base64"),
-      width: 1200,
-      height: 1600,
-    };
-    const maxPages = options.maxPages ?? 1;
-    return maxPages >= 1 ? [image] : [];
+    fs.writeFileSync(path.join(workDir, "doc.pdf"), pdfBuffer);
+    fs.writeFileSync(path.join(workDir, "index.html"), RENDER_PAGE_HTML);
+
+    // Страница читает pdf.js и сам PDF из соседних файлов — для file:// это
+    // требует явного разрешения.
+    const browser = await launchBrowser(["--allow-file-access-from-files"]);
+    try {
+      const page = await browser.newPage();
+      await page.goto(`file://${path.join(workDir, "index.html")}`, { waitUntil: "load" });
+      await page.waitForFunction("window.pdfReady === true", { timeout: 30_000 });
+
+      const rendered = (await page.evaluate(
+        (nums: number[], s: number) =>
+          (window as unknown as {
+            renderPages: (n: number[], s: number) => Promise<
+              { pageNumber: number; dataUrl: string; width: number; height: number }[]
+            >;
+          }).renderPages(nums, s),
+        pageNumbers,
+        scale,
+      )) as { pageNumber: number; dataUrl: string; width: number; height: number }[];
+
+      return rendered.map((r) => ({
+        pageNumber: r.pageNumber,
+        mimeType: "image/png" as const,
+        base64: r.dataUrl.replace(/^data:image\/png;base64,/, ""),
+        width: r.width,
+        height: r.height,
+      }));
+    } finally {
+      await browser.close();
+    }
   } finally {
-    await browser.close();
+    fs.rmSync(workDir, { recursive: true, force: true });
   }
 }
 
-/** Convert PDF buffer to base64 PNG page images (pdfjs + optional canvas, Puppeteer fallback). */
+/** Convert PDF buffer to base64 PNG page images (рендер в Chrome через pdf.js). */
 export async function pdfBufferToImages(
   pdfBuffer: Buffer,
   options: PdfToImagesOptions = {},
 ): Promise<PdfPageImage[]> {
-  try {
-    return await renderWithPdfJs(pdfBuffer, options);
-  } catch {
-    return renderWithPuppeteer(pdfBuffer, options);
-  }
+  const pageNumbers = await resolvePageNumbers(pdfBuffer, options);
+  if (pageNumbers.length === 0) return [];
+  return renderInChrome(pdfBuffer, pageNumbers, options.scale ?? 2);
 }
 
 export function selectRelevantPages(images: PdfPageImage[]): PdfPageImage[] {

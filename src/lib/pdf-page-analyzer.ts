@@ -17,13 +17,18 @@ const PAGE_KEYWORD_RULES: PageKeywordRule[] = [
   { pattern: /электрик|электр\.|electr/i, weight: 12, label: "электрика" },
   { pattern: /тепл.*пол|тёпл.*пол/i, weight: 10, label: "тёплый пол" },
   { pattern: /utp|интернет|слаботоч/i, weight: 10, label: "слаботочные" },
-  { pattern: /экспликац|площад.*м2|общ.*площад/i, weight: 8, label: "площадь" },
+  // Экспликация помещений — единственный источник площадей и списка комнат,
+  // поэтому она в приоритете наравне с планами.
+  { pattern: /экспликац|ведомост.*помещен|площад.*м2|общ.*площад/i, weight: 15, label: "экспликация" },
   { pattern: /обмерн|планировоч/i, weight: 6, label: "обмерный план" },
   { pattern: /рабоч.*проект|дизайн.*проект/i, weight: 4, label: "общие данные" },
 ];
 
 const MIN_SCORE = 8;
 const MAX_SELECTED_PAGES = 12;
+/** В альбомах без текстового слоя оценка у всех страниц нулевая — тогда
+ *  модели нужно показать хотя бы это количество страниц, иначе она додумывает. */
+const MIN_SELECTED_PAGES = 8;
 
 async function loadPdfJs() {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -70,17 +75,26 @@ function scorePageText(text: string): { score: number; matchedKeywords: string[]
   return { score, matchedKeywords, title };
 }
 
-export async function analyzePdfPages(pdfBuffer: Buffer): Promise<AnalyzedPdfPage[]> {
+export interface PdfAnalysis {
+  pages: AnalyzedPdfPage[];
+  /** Полный текст выбранных страниц — экспликацию выгоднее отдать моделью текстом,
+   *  чем надеяться, что она прочитает таблицу с картинки. */
+  texts: Record<number, string>;
+}
+
+export async function analyzePdfPages(pdfBuffer: Buffer): Promise<PdfAnalysis> {
   const pdfjs = await loadPdfJs();
   const data = new Uint8Array(pdfBuffer);
   const pdf = await pdfjs.getDocument({ data, useSystemFonts: true }).promise;
 
   const analyzed: AnalyzedPdfPage[] = [];
+  const texts: Record<number, string> = {};
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const text = await extractPageText(page);
     const { score, matchedKeywords, title } = scorePageText(text);
+    texts[pageNumber] = text;
 
     analyzed.push({
       pageNumber,
@@ -92,7 +106,7 @@ export async function analyzePdfPages(pdfBuffer: Buffer): Promise<AnalyzedPdfPag
     });
   }
 
-  const ranked = [...analyzed].sort((a, b) => b.score - a.score);
+  const ranked = [...analyzed].sort((a, b) => b.score - a.score || a.pageNumber - b.pageNumber);
   const selectedNumbers = new Set<number>();
 
   for (const page of ranked) {
@@ -101,19 +115,24 @@ export async function analyzePdfPages(pdfBuffer: Buffer): Promise<AnalyzedPdfPag
     }
   }
 
-  if (selectedNumbers.size === 0) {
-    const fallbackCount = Math.min(8, analyzed.length);
-    for (let i = 0; i < fallbackCount; i += 1) {
-      selectedNumbers.add(i + 1);
+  // Сканы и альбомы без текстового слоя дают нулевые оценки: добираем страницы
+  // по порядку, иначе модель получает одну случайную страницу вместо проекта.
+  if (selectedNumbers.size < MIN_SELECTED_PAGES) {
+    for (const page of ranked) {
+      if (selectedNumbers.size >= Math.min(MIN_SELECTED_PAGES, analyzed.length)) break;
+      selectedNumbers.add(page.pageNumber);
     }
   }
 
-  return analyzed
-    .map((page) => ({
-      ...page,
-      selected: selectedNumbers.has(page.pageNumber),
-    }))
-    .sort((a, b) => a.pageNumber - b.pageNumber);
+  return {
+    pages: analyzed
+      .map((page) => ({
+        ...page,
+        selected: selectedNumbers.has(page.pageNumber),
+      }))
+      .sort((a, b) => a.pageNumber - b.pageNumber),
+    texts,
+  };
 }
 
 export function getSelectedPageNumbers(pages: AnalyzedPdfPage[]): number[] {

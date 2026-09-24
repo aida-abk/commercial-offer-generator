@@ -15,8 +15,18 @@ export interface ExtractProgressEvent {
   elapsedSeconds: number;
 }
 
+/** Расход токенов на распознавание — показывается пользователю после разбора. */
+export interface ExtractUsageSummary {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  requests: number;
+  costUsd: number;
+}
+
 export interface ExtractCompleteEvent {
   type: "complete";
+  usage?: ExtractUsageSummary;
   extracted: import("./types").ExtractedProject;
   analyzedPages: import("./types").AnalyzedPdfPage[];
   selectedPages: number[];
@@ -47,8 +57,12 @@ const STAGE_WEIGHTS: Record<ExtractStage, number> = {
 export function estimateExtractDurationMs(fileSizeBytes: number, pageCount = 10): number {
   const baseMs = 12_000;
   const sizeMs = Math.min(fileSizeBytes / 80_000, 30_000);
-  const pagesMs = pageCount * 2_500;
-  const visionMs = 35_000 + pageCount * 3_000;
+  const pagesMs = pageCount * 1_500;
+  // Листы идут пачками по OPENAI_PAGES_PER_REQUEST; при упоре в лимит токенов
+  // между пачками добавляются паузы, поэтому закладываем ~35 с на пачку.
+  const perRequest = Number(process.env.OPENAI_PAGES_PER_REQUEST) || 3;
+  const batches = Math.max(1, Math.ceil(pageCount / perRequest));
+  const visionMs = batches * 35_000;
   return baseMs + sizeMs + pagesMs + visionMs;
 }
 

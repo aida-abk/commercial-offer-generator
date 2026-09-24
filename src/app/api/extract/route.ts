@@ -14,9 +14,14 @@ import {
   summarizePageAnalysis,
 } from "@/lib/pdf-page-analyzer";
 import { pdfBufferToImages } from "@/lib/pdf-to-images";
-import { extractProjectFromImages } from "@/lib/vision-extract";
+import {
+  extractProjectFromImages,
+  usageCostUsd,
+  type ExtractionUsage,
+} from "@/lib/vision-extract";
 
-export const maxDuration = 120;
+// Листы уходят пачками, а при упоре в лимит токенов ещё и с паузами на повтор.
+export const maxDuration = 600;
 export const runtime = "nodejs";
 
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -89,7 +94,7 @@ export async function POST(request: Request) {
 
       try {
         tick("analyze");
-        const analyzedPages = await analyzePdfPages(buffer);
+        const { pages: analyzedPages, texts } = await analyzePdfPages(buffer);
         const selectedPageNumbers = getSelectedPageNumbers(analyzedPages);
         const pageSummary = summarizePageAnalysis(analyzedPages);
 
@@ -99,7 +104,38 @@ export async function POST(request: Request) {
         });
 
         tick("vision");
-        const extracted = await extractProjectFromImages(images);
+        // Текст отдаём только по выбранным страницам: экспликацию модель читает
+        // текстом, а не по картинке.
+        const selectedTexts = Object.fromEntries(
+          selectedPageNumbers.map((n) => [n, texts[n] ?? ""]),
+        );
+        let usage: ExtractionUsage = {
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          requests: 0,
+        };
+        const extracted = await extractProjectFromImages(
+          images,
+          selectedTexts,
+          (done, total, batchUsage) => {
+            usage = batchUsage;
+            if (total <= 1) return;
+            const elapsedSeconds = (Date.now() - startedAt) / 1000;
+            emit({
+              type: "progress",
+              stage: "vision",
+              // Внутри стадии распознавания двигаемся по пачкам листов.
+              progress: Math.min(
+                99,
+                Math.round(progressForStage("vision") + (done / total) * 20),
+              ),
+              message: `AI считает точки по листам — пачка ${done} из ${total}…`,
+              etaSeconds: Math.max(0, estimatedTotalMs / 1000 - elapsedSeconds),
+              elapsedSeconds,
+            });
+          },
+        );
         extracted.notes = [
           ...pageSummary.map((s) => `[Анализ PDF] ${s}`),
           ...(extracted.notes ?? []),
@@ -115,6 +151,7 @@ export async function POST(request: Request) {
           analyzedPages,
           selectedPages: selectedPageNumbers,
           sourceFileName: file.name,
+          usage: { ...usage, costUsd: usageCostUsd(usage) },
           variants: Object.fromEntries(
             Object.entries(calc.variants).map(([brand, v]) => [
               brand,

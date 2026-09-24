@@ -1,5 +1,4 @@
 import fs from "fs";
-import path from "path";
 
 const LAUNCH_ARGS = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"];
 
@@ -26,22 +25,23 @@ function resolveSystemChrome(): string | undefined {
   return candidates.find(fileExists);
 }
 
-export async function launchBrowser() {
+export async function launchBrowser(extraArgs: string[] = []) {
   const puppeteer = await import("puppeteer");
+  const args = [...LAUNCH_ARGS, ...extraArgs];
 
   const systemChrome = resolveSystemChrome();
   if (systemChrome) {
     return puppeteer.default.launch({
       headless: true,
       executablePath: systemChrome,
-      args: LAUNCH_ARGS,
+      args,
     });
   }
 
   try {
     return puppeteer.default.launch({
       headless: true,
-      args: LAUNCH_ARGS,
+      args,
     });
   } catch (error) {
     const hint =
