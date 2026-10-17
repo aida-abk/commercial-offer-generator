@@ -23,17 +23,27 @@ type NumericField =
   | "airConditioners"
   | "utpPoints";
 
-const COLUMNS: { key: NumericField; label: string; hint: string; width: string }[] = [
-  { key: "areaSqM", label: "м²", hint: "Площадь помещения", width: "w-16" },
-  { key: "outlets", label: "Роз.", hint: "Розеток в помещении", width: "w-14" },
-  { key: "lightPoints", label: "Свет", hint: "Точек света (софиты, люстры, бра)", width: "w-14" },
-  { key: "lightGroups", label: "Гр.", hint: "Групп света = мест управления. Софиты внутри группы идут шлейфом", width: "w-14" },
-  { key: "switchesSingle", label: "Выкл.", hint: "Обычные выключатели (мест)", width: "w-14" },
-  { key: "switchesTwoWay", label: "Прох.", hint: "Проходные выключатели (мест, обычно 2)", width: "w-14" },
-  { key: "switchesThreeWay", label: "3 мест", hint: "Управление из 3 мест (мест, 3)", width: "w-14" },
-  { key: "warmFloorLoops", label: "Т/пол", hint: "Контуров тёплого пола — на каждый отдельная группа", width: "w-14" },
-  { key: "airConditioners", label: "Конд.", hint: "Внутренних блоков кондиционера — на каждый отдельная группа", width: "w-14" },
-  { key: "utpPoints", label: "UTP", hint: "Точек UTP (ТВ-зоны, кабинет)", width: "w-14" },
+interface Column {
+  key: NumericField;
+  /** Подпись в шапке таблицы на компьютере. */
+  label: string;
+  /** Подпись в карточке на телефоне — там места больше, можно словом. */
+  cardLabel: string;
+  hint: string;
+  width: string;
+}
+
+const COLUMNS: Column[] = [
+  { key: "areaSqM", label: "м²", cardLabel: "Площадь, м²", hint: "Площадь помещения", width: "w-16" },
+  { key: "outlets", label: "Роз.", cardLabel: "Розетки", hint: "Розеток в помещении", width: "w-14" },
+  { key: "lightPoints", label: "Свет", cardLabel: "Точки света", hint: "Точек света (софиты, люстры, бра)", width: "w-14" },
+  { key: "lightGroups", label: "Гр.", cardLabel: "Групп света", hint: "Групп света = мест управления. Софиты внутри группы идут шлейфом", width: "w-14" },
+  { key: "switchesSingle", label: "Выкл.", cardLabel: "Выключатели", hint: "Обычные выключатели (мест)", width: "w-14" },
+  { key: "switchesTwoWay", label: "Прох.", cardLabel: "Проходные", hint: "Проходные выключатели (мест, обычно 2)", width: "w-14" },
+  { key: "switchesThreeWay", label: "3 мест", cardLabel: "Из 3 мест", hint: "Управление из 3 мест (мест, 3)", width: "w-14" },
+  { key: "warmFloorLoops", label: "Т/пол", cardLabel: "Тёплый пол", hint: "Контуров тёплого пола — на каждый отдельная группа", width: "w-14" },
+  { key: "airConditioners", label: "Конд.", cardLabel: "Кондиционеры", hint: "Внутренних блоков кондиционера — на каждый отдельная группа", width: "w-14" },
+  { key: "utpPoints", label: "UTP", cardLabel: "UTP", hint: "Точек UTP (ТВ-зоны, кабинет)", width: "w-14" },
 ];
 
 export function RoomsEditor({ rooms, onChange }: Props) {
@@ -78,7 +88,9 @@ export function RoomsEditor({ rooms, onChange }: Props) {
         </button>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200">
+      {/* Таблица — для компьютера. На телефоне 12 столбцов превращаются
+          в горизонтальную прокрутку внутри узкой полоски, поэтому там карточки. */}
+      <div className="hidden overflow-x-auto rounded-lg border border-slate-200 sm:block">
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-xs text-slate-600">
             <tr>
@@ -173,6 +185,72 @@ export function RoomsEditor({ rooms, onChange }: Props) {
             </tr>
           </tfoot>
         </table>
+      </div>
+
+      {/* Карточки — для телефона. */}
+      <div className="space-y-3 sm:hidden">
+        {rooms.map((room) => (
+          <div key={room.id} className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="flex items-start gap-2">
+              <input
+                type="text"
+                className="min-w-0 flex-1 rounded border border-slate-200 px-2 py-1.5 text-sm font-medium"
+                value={room.name}
+                onChange={(e) => update(room.id, { name: e.target.value })}
+              />
+              <button
+                type="button"
+                onClick={() => removeRoom(room.id)}
+                className="shrink-0 rounded px-2 py-1.5 text-xs text-slate-400 hover:bg-red-50 hover:text-red-600"
+              >
+                Удалить
+              </button>
+            </div>
+
+            <select
+              className="mt-2 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+              value={room.type}
+              onChange={(e) => update(room.id, { type: e.target.value as RoomType })}
+            >
+              {(Object.keys(ROOM_TYPE_LABELS) as RoomType[]).map((t) => (
+                <option key={t} value={t}>
+                  {ROOM_TYPE_LABELS[t]}
+                </option>
+              ))}
+            </select>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {COLUMNS.map((c) => (
+                <label key={c.key} className="block">
+                  <span className="block text-xs text-slate-500">{c.cardLabel}</span>
+                  {c.key === "areaSqM" ? (
+                    <DecimalInput
+                      value={room.areaSqM}
+                      onChange={(v) => update(room.id, { areaSqM: v })}
+                      maxDecimals={2}
+                      className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      inputMode="numeric"
+                      className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                      value={room[c.key]}
+                      onChange={(e) => update(room.id, { [c.key]: Number(e.target.value) || 0 })}
+                    />
+                  )}
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+          Итого: {rooms.length} помещений · {formatMeasure(totals.totalAreaSqM)} м² ·
+          розеток {totals.outlets} · выключателей {totals.switches} · свет {totals.lightPoints}
+        </div>
       </div>
 
       <p className="text-xs text-slate-500">

@@ -519,11 +519,13 @@ export default function OfferEditorPage() {
       setMaterials(data.lineItems.materials);
       setBrandVariants(data.brandVariants);
       setActiveBrand(brand);
-      window.open(
-        `/api/generate-pdf?id=${encodeURIComponent(id)}&brand=${encodeURIComponent(brand)}`,
-        "_blank",
-      );
-      setMessage("Правки сохранены, PDF открылся в новой вкладке.");
+      // Переход в той же вкладке, а не window.open: открытие новой вкладки
+      // происходит уже после двух await, и мобильные браузеры блокируют его
+      // как всплывающее окно — кнопка «скачать» просто не срабатывала.
+      // Сервер отдаёт файл с Content-Disposition: attachment, поэтому страница
+      // остаётся на месте, а файл скачивается.
+      window.location.href = `/api/generate-pdf?id=${encodeURIComponent(id)}&brand=${encodeURIComponent(brand)}`;
+      setMessage("Правки сохранены, файл скачивается.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка перед PDF");
     } finally {
@@ -628,7 +630,7 @@ export default function OfferEditorPage() {
         </button>
         <span className="text-xs text-slate-500">
           Выгружается вариант выбранного бренда. Правки сохраняются автоматически перед
-          скачиванием, файл откроется в новой вкладке.
+          скачиванием.
         </span>
       </div>
 

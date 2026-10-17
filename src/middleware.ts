@@ -5,7 +5,13 @@ import { SESSION_COOKIE } from "@/lib/auth";
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (pathname === "/login" || pathname.startsWith("/api/auth")) {
+  // /api/health открыт без пароля: он нужен, чтобы проверять доступность сайта
+  // снаружи, и ничего кроме времени работы и объёма памяти не показывает.
+  if (
+    pathname === "/login" ||
+    pathname.startsWith("/api/auth") ||
+    pathname === "/api/health"
+  ) {
     return NextResponse.next();
   }
 

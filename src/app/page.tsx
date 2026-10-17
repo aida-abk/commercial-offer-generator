@@ -101,6 +101,7 @@ export default function HomePage() {
   const [confirmArea, setConfirmArea] = useState(90);
   const [confirmUseConduit, setConfirmUseConduit] = useState(false);
   const [confirmRooms, setConfirmRooms] = useState<Room[]>([]);
+  const [roomsOpen, setRoomsOpen] = useState(true);
   const [confirmLeakSensor, setConfirmLeakSensor] = useState(true);
 
   const [offerId, setOfferId] = useState<string | null>(null);
@@ -187,6 +188,11 @@ export default function HomePage() {
         : synthesizeRooms({ ...payload.extracted, totalAreaSqM: area || 60 }),
     );
     setConfirmLeakSensor(payload.extracted.leakSensor !== false);
+    // На телефоне таблица помещений занимает два экрана и отодвигает главную
+    // кнопку. Сверка — дело добровольное, поэтому по умолчанию она свёрнута.
+    setRoomsOpen(
+      typeof window === "undefined" || !window.matchMedia("(max-width: 639px)").matches,
+    );
     setConfirmUseConduit(
       payload.extracted.useConduit ?? area > CONDUIT_DEFAULT_AREA_SQM,
     );
@@ -405,13 +411,24 @@ export default function HomePage() {
           >
             {mode === "upload" ? (
               <>
-                <label className="block text-sm font-medium text-slate-700">PDF проекта</label>
-                <input
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  className="block w-full text-sm text-slate-600 file:mr-4 file:rounded-md file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-700"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                />
+                <span className="block text-sm font-medium text-slate-700">PDF проекта</span>
+                {/* Системную кнопку выбора файла браузер подписывает сам и
+                    по-английски («Choose file»), поэтому она спрятана, а наружу
+                    выведена своя. */}
+                <label className="mt-1 flex cursor-pointer flex-col gap-2 rounded-lg border border-dashed border-slate-300 px-4 py-4 text-center hover:border-blue-400 hover:bg-blue-50/40 sm:flex-row sm:items-center sm:gap-3 sm:text-left">
+                  <input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    className="sr-only"
+                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                  />
+                  <span className="mx-auto rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white sm:mx-0">
+                    Выбрать файл
+                  </span>
+                  <span className="min-w-0 break-words text-sm text-slate-600">
+                    {file ? file.name : "Файл не выбран"}
+                  </span>
+                </label>
                 <p className="text-xs text-slate-500">
                   Обычно занимает 1–2 минуты в зависимости от размера PDF.
                 </p>
@@ -613,7 +630,31 @@ export default function HomePage() {
             </label>
           </div>
 
-          <RoomsEditor rooms={confirmRooms} onChange={setConfirmRooms} />
+          <div className="rounded-lg border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setRoomsOpen(!roomsOpen)}
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+            >
+              <span>
+                <span className="block text-sm font-semibold text-slate-800">
+                  Помещения: {confirmRooms.length}
+                </span>
+                <span className="block text-xs text-slate-500">
+                  розеток {roomTotals.outlets} · выключателей {roomTotals.switches} · свет{" "}
+                  {roomTotals.lightPoints} · UTP {roomTotals.utpPoints}
+                </span>
+              </span>
+              <span className="shrink-0 text-xs font-medium text-blue-600">
+                {roomsOpen ? "Свернуть" : "Проверить и поправить"}
+              </span>
+            </button>
+            {roomsOpen && (
+              <div className="border-t border-slate-100 p-4">
+                <RoomsEditor rooms={confirmRooms} onChange={setConfirmRooms} />
+              </div>
+            )}
+          </div>
 
           {draft.variants && (
             <div className="grid gap-3 sm:grid-cols-3">
@@ -633,7 +674,9 @@ export default function HomePage() {
             </div>
           )}
 
-          <div className="flex flex-wrap gap-3">
+          {/* На телефоне панель прилипает к низу экрана: иначе до главной кнопки
+              нужно прокрутить почти три экрана. */}
+          <div className="sticky bottom-0 -mx-6 -mb-6 flex flex-wrap gap-3 border-t border-slate-200 bg-white/95 px-6 py-4 backdrop-blur sm:static sm:mx-0 sm:mb-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:backdrop-blur-none">
             <button
               type="button"
               onClick={resetWizard}
