@@ -1,17 +1,42 @@
-import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, unlinkSync } from "fs";
 import os from "os";
 import path from "path";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-/** Примонтирован ли DATA_DIR как отдельный том, или это папка внутри контейнера. */
-function volumeInfo(dataDir: string) {
-  if (!existsSync(dataDir)) return { exists: false, mounted: false, writable: false };
+/**
+ * Лимит памяти контейнера. os.totalmem() внутри контейнера показывает память
+ * всего хоста (сотни гигабайт) и для диагностики бесполезен — настоящий предел
+ * лежит в cgroup.
+ */
+function memoryLimitMb(): { limitMb: number | null; usedMb: number } {
+  const usedMb = Math.round(process.memoryUsage().rss / 1024 / 1024);
+  const sources = [
+    "/sys/fs/cgroup/memory.max",
+    "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+  ];
+  for (const file of sources) {
+    try {
+      const raw = readFileSync(file, "utf-8").trim();
+      if (raw === "max") continue;
+      const bytes = Number(raw);
+      // Нереалистично большое значение означает «без лимита».
+      if (Number.isFinite(bytes) && bytes > 0 && bytes < os.totalmem() * 2) {
+        return { limitMb: Math.round(bytes / 1024 / 1024), usedMb };
+      }
+    } catch {
+      // файла нет — не Linux или другая версия cgroup
+    }
+  }
+  return { limitMb: null, usedMb };
+}
+
+function dataDirInfo(dataDir: string) {
+  if (!existsSync(dataDir)) return { exists: false, mounted: false, writable: false, files: [] };
 
   let mounted = false;
   try {
-    // В контейнере Linux смонтированные тома перечислены в /proc/mounts.
     const mounts = readFileSync("/proc/mounts", "utf-8");
     mounted = mounts.split("\n").some((line) => line.split(" ")[1] === dataDir);
   } catch {
@@ -28,39 +53,59 @@ function volumeInfo(dataDir: string) {
     writable = false;
   }
 
-  return { exists: true, mounted, writable };
+  let files: { name: string; kb: number }[] = [];
+  try {
+    files = readdirSync(dataDir)
+      .filter((name) => !name.startsWith("."))
+      .map((name) => {
+        try {
+          return { name, kb: Math.round(statSync(path.join(dataDir, name)).size / 1024) };
+        } catch {
+          return { name, kb: 0 };
+        }
+      });
+  } catch {
+    files = [];
+  }
+
+  return { exists: true, mounted, writable, files };
 }
 
 /**
- * Служебная страница для диагностики простоев: показывает, сколько сервис живёт
- * с последнего старта (перезапускался ли он), сколько осталось памяти и виден ли
- * диск с данными. Открыта без пароля — иначе ею нельзя пользоваться для проверки.
+ * Диагностика простоев и потери данных: сколько сервис живёт с последнего
+ * старта, упирается ли он в память и — главное — лежит ли база на томе.
+ * Открыта без пароля, чтобы доступность можно было проверять снаружи.
  */
 export async function GET() {
   const dataDir = process.env.DATA_DIR ?? path.join(process.cwd(), "config");
-  const dbFile = (process.env.DATABASE_URL ?? "").replace(/^file:/, "");
-
-  const uptimeSeconds = Math.round(process.uptime());
-  const hours = Math.floor(uptimeSeconds / 3600);
-  const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+  const dbPath = (process.env.DATABASE_URL ?? "").replace(/^file:/, "");
+  const dbResolved = dbPath ? path.resolve(dbPath) : null;
+  // Главная проверка: если база не внутри тома, она исчезнет при следующем деплое.
+  const dbOnVolume = dbResolved ? dbResolved.startsWith(path.resolve(dataDir) + path.sep) : false;
 
   let dbSizeKb: number | null = null;
   try {
-    if (dbFile && existsSync(dbFile)) dbSizeKb = Math.round(statSync(dbFile).size / 1024);
+    if (dbResolved && existsSync(dbResolved)) dbSizeKb = Math.round(statSync(dbResolved).size / 1024);
   } catch {
     dbSizeKb = null;
   }
 
+  const uptimeSeconds = Math.round(process.uptime());
+  const memory = memoryLimitMb();
+
   return NextResponse.json({
     ok: true,
-    startedAgo: `${hours} ч ${minutes} мин`,
+    startedAgo: `${Math.floor(uptimeSeconds / 3600)} ч ${Math.floor((uptimeSeconds % 3600) / 60)} мин`,
     uptimeSeconds,
-    memory: {
-      usedMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
-      totalMb: Math.round(os.totalmem() / 1024 / 1024),
-      freeMb: Math.round(os.freemem() / 1024 / 1024),
-    },
-    data: { dir: dataDir, ...volumeInfo(dataDir), dbSizeKb },
+    memory,
+    database: { path: dbResolved, onVolume: dbOnVolume, sizeKb: dbSizeKb },
+    data: { dir: dataDir, ...dataDirInfo(dataDir) },
+    warnings: [
+      ...(dbResolved && !dbOnVolume
+        ? ["База лежит вне тома — данные исчезнут при следующем деплое."]
+        : []),
+      ...(!dbResolved ? ["DATABASE_URL не задан."] : []),
+    ],
     now: new Date().toISOString(),
   });
 }
