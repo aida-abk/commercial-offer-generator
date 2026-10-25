@@ -7,6 +7,7 @@ import { formatMeasure, formatTenge } from "@/lib/format";
 import type {
   AnalyzedPdfPage,
   BrandVariants,
+  CatalogItem,
   CircuitPlan,
   ExtractedProject,
   LineItem,
@@ -47,24 +48,27 @@ interface OfferPayload {
 function EditableMaterialsTable({
   rows,
   onChange,
+  catalog,
 }: {
   rows: LineItem[];
   onChange: (rows: LineItem[]) => void;
+  catalog: CatalogItem[];
 }) {
   function updateRow(index: number, patch: Partial<LineItem>) {
     onChange(rows.map((row, i) => (i === index ? recalcItem({ ...row, ...patch }) : row)));
   }
 
-  function addRow() {
+  /** Строка из прайса: название, единица и цена подставляются готовыми. */
+  function addFromCatalog(item: CatalogItem | null) {
     onChange([
       ...rows,
       {
-        id: `custom-${Date.now()}`,
-        name: "Новая позиция",
-        unit: "шт",
+        id: `${item ? item.id : "custom"}-${Date.now()}`,
+        name: item?.name ?? "Новая позиция",
+        unit: item?.unit ?? "шт",
         quantity: 1,
-        unitPrice: 0,
-        total: 0,
+        unitPrice: item?.price ?? 0,
+        total: item?.price ?? 0,
         section: "materials",
       },
     ]);
@@ -80,13 +84,32 @@ function EditableMaterialsTable({
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
         <h2 className="font-semibold text-slate-900">2. Материалы (лист «Товары»)</h2>
-        <button
-          type="button"
-          onClick={addRow}
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
-        >
-          + Добавить строку
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Позиция из прайса подставляется с ценой — не нужно вспоминать её руками. */}
+          <select
+            value=""
+            onChange={(e) => {
+              const picked = catalog.find((i) => i.id === e.target.value) ?? null;
+              addFromCatalog(picked);
+              e.target.value = "";
+            }}
+            className="max-w-[16rem] rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+          >
+            <option value="">+ Добавить из прайса…</option>
+            {catalog.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} — {formatTenge(item.price)} ₸/{item.unit}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => addFromCatalog(null)}
+            className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+          >
+            + Пустая строка
+          </button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
@@ -348,6 +371,7 @@ export default function OfferEditorPage() {
   const [brandVariants, setBrandVariants] = useState<BrandVariants | null>(null);
   const [activeBrand, setActiveBrand] = useState<PanelBrandId>("schneider-easy9");
   const [plan, setPlan] = useState<CircuitPlan | null>(null);
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -402,6 +426,20 @@ export default function OfferEditorPage() {
   useEffect(() => {
     void loadOffer();
   }, [loadOffer]);
+
+  // Прайс нужен, чтобы добавлять строки готовыми позициями, а не вручную.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/prices");
+        if (!res.ok) return;
+        const data = (await res.json()) as { materials: CatalogItem[]; panel: CatalogItem[] };
+        setCatalog([...data.materials, ...data.panel]);
+      } catch {
+        setCatalog([]);
+      }
+    })();
+  }, []);
 
   function handlePanelChange(rows: LineItem[]) {
     if (!brandVariants) return;
@@ -642,7 +680,11 @@ export default function OfferEditorPage() {
       )}
 
       <EditableSection title="1. Работы" rows={labor} onChange={handleLaborChange} />
-      <EditableMaterialsTable rows={materials} onChange={handleMaterialsChange} />
+      <EditableMaterialsTable
+        rows={materials}
+        onChange={handleMaterialsChange}
+        catalog={catalog}
+      />
       <EditableSection
         title={`3. Щит и автоматика — ${BRAND_LABELS[activeBrand]}`}
         rows={activePanel}

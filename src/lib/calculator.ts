@@ -234,48 +234,57 @@ function computeQuantities(project: ExtractedProject) {
   };
 }
 
-function buildMaterials(q: ReturnType<typeof computeQuantities>): LineItem[] {
-  const materialSpecs: { id: string; qty: number }[] = [
-    { id: "cable-vvgng-2x1.5", qty: q.cable2x15 },
-    { id: "cable-vvgng-3x1.5", qty: q.cable15 },
-    { id: "cable-vvgng-3x2.5", qty: q.cable25 },
-    { id: "cable-vvgng-3x6", qty: q.cable6 },
-    { id: "cable-utp", qty: q.cableUtp },
-    { id: "wire-pugnp", qty: q.wirePugnp },
-    { id: "conduit-pvc-d20", qty: q.conduitPvc },
-    { id: "nails-19mm", qty: q.nails },
-    { id: "cable-ties-150", qty: q.cableTies },
-    { id: "junction-box", qty: q.junctionBoxes },
-    { id: "clips-d20", qty: q.clips },
-    { id: "pad-gun-d20", qty: q.pads },
-    { id: "socket-box", qty: q.socketBoxes },
-    { id: "socket-cover", qty: q.socketBoxes },
-    { id: "sleeve-gml-4-3", qty: q.sleeveGml4 },
-    { id: "sleeve-gml-6-4", qty: q.sleeveGml6 },
-    { id: "sleeve-gml-10-5", qty: q.sleeveGml10 },
-    { id: "sleeve-gml-16-6", qty: q.sleeveGml16 },
-    { id: "trash-bags", qty: q.trashBags },
-    { id: "tape", qty: q.tape },
-    { id: "socket-e27", qty: q.bulbs },
-    { id: "bulb-led", qty: q.bulbs },
-    { id: "dowel-clamp", qty: 2 },
-    { id: "disc-stone-125", qty: 2 },
-    { id: "core-bit-72", qty: 1 },
-    { id: "socket-double", qty: 2 },
-    { id: "rotband-25kg", qty: q.isLargeProject ? 2 : 1 },
-  ];
+type Quantities = ReturnType<typeof computeQuantities>;
 
-  if (q.isLargeProject) {
-    materialSpecs.push({ id: "cable-channel-40", qty: 4 });
-  }
+/**
+ * Позиции каталога, которые подставляет автоматический расчёт, в порядке их
+ * вывода в смете. Список один на всё приложение: по нему же админка понимает,
+ * какие позиции нельзя удалять, иначе строка молча пропадёт из будущих КП.
+ */
+const MATERIAL_SPECS: { id: string; qty: (q: Quantities) => number }[] = [
+  { id: "cable-vvgng-2x1.5", qty: (q) => q.cable2x15 },
+  { id: "cable-vvgng-3x1.5", qty: (q) => q.cable15 },
+  { id: "cable-vvgng-3x2.5", qty: (q) => q.cable25 },
+  { id: "cable-vvgng-3x6", qty: (q) => q.cable6 },
+  { id: "cable-utp", qty: (q) => q.cableUtp },
+  { id: "wire-pugnp", qty: (q) => q.wirePugnp },
+  { id: "conduit-pvc-d20", qty: (q) => q.conduitPvc },
+  // Гофра ПНД встаёт сразу за ПВХ и только если включена в правилах.
+  {
+    id: "conduit-pnd-d20",
+    qty: (q) => (loadCalculationRules().includeConduitPnd && q.useConduit ? q.conduitPnd : 0),
+  },
+  { id: "nails-19mm", qty: (q) => q.nails },
+  { id: "cable-ties-150", qty: (q) => q.cableTies },
+  { id: "junction-box", qty: (q) => q.junctionBoxes },
+  { id: "clips-d20", qty: (q) => q.clips },
+  { id: "pad-gun-d20", qty: (q) => q.pads },
+  { id: "socket-box", qty: (q) => q.socketBoxes },
+  { id: "socket-cover", qty: (q) => q.socketBoxes },
+  { id: "sleeve-gml-4-3", qty: (q) => q.sleeveGml4 },
+  { id: "sleeve-gml-6-4", qty: (q) => q.sleeveGml6 },
+  { id: "sleeve-gml-10-5", qty: (q) => q.sleeveGml10 },
+  { id: "sleeve-gml-16-6", qty: (q) => q.sleeveGml16 },
+  { id: "trash-bags", qty: (q) => q.trashBags },
+  { id: "tape", qty: (q) => q.tape },
+  { id: "socket-e27", qty: (q) => q.bulbs },
+  { id: "bulb-led", qty: (q) => q.bulbs },
+  { id: "dowel-clamp", qty: () => 2 },
+  { id: "disc-stone-125", qty: () => 2 },
+  { id: "core-bit-72", qty: () => 1 },
+  { id: "socket-double", qty: () => 2 },
+  { id: "rotband-25kg", qty: (q) => (q.isLargeProject ? 2 : 1) },
+  { id: "cable-channel-40", qty: (q) => (q.isLargeProject ? 4 : 0) },
+];
 
-  if (loadCalculationRules().includeConduitPnd && q.useConduit) {
-    const pvcIndex = materialSpecs.findIndex((s) => s.id === "conduit-pvc-d20");
-    materialSpecs.splice(pvcIndex + 1, 0, { id: "conduit-pnd-d20", qty: q.conduitPnd });
-  }
+/** Идентификаторы материалов, участвующих в автоматическом расчёте. */
+export const CALCULATED_MATERIAL_IDS = MATERIAL_SPECS.map((spec) => spec.id);
 
-  return materialSpecs
-    .map(({ id, qty }) => lineFromCatalog("materials", id, qty))
+function buildMaterials(q: Quantities): LineItem[] {
+  return MATERIAL_SPECS
+    // Нулевые позиции (выключенная гофра ПНД, кабель-канал на обычном объекте)
+    // в смету не попадают — lineFromCatalog отбрасывает их по количеству.
+    .map(({ id, qty }) => lineFromCatalog("materials", id, qty(q)))
     .filter((item): item is LineItem => item !== null);
 }
 
