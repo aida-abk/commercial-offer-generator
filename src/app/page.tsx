@@ -44,7 +44,8 @@ const DEDICATED_FIELDS: { key: keyof DedicatedCircuits; label: string; hint: str
   { key: "airConditioners", label: "Кондиционеры", hint: "по группе на каждый" },
   { key: "hob", label: "Варочная поверхность", hint: "3*6" },
   { key: "ovenMicrowave", label: "Духовой шкаф + СВЧ", hint: "одна группа" },
-  { key: "warmFloor", label: "Тёплый пол", hint: "3*2,5" },
+  { key: "warmFloor", label: "Тёплый пол", hint: "группа на каждый контур" },
+  { key: "leakSensor", label: "Датчик протечки воды", hint: "«нептун», 3*2,5" },
 ];
 
 async function readExtractStream(

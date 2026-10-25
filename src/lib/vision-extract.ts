@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { DedicatedCircuits, ExtractedProject, RoomSpec } from "./types";
+import type { DedicatedCircuits, ExtractedProject, RoomKind, RoomSpec } from "./types";
 import type { PdfPageImage } from "./pdf-to-images";
 
 const EXTRACTION_SCHEMA = `{
@@ -15,6 +15,7 @@ const EXTRACTION_SCHEMA = `{
   "warmFloorCircuits": number,
   "rooms": [{
     "name": "string",
+    "kind": "kitchen | corridor | bedroom | bathroom | living | other",
     "areaSqM": number,
     "widthMeters": number,
     "lengthMeters": number,
@@ -31,7 +32,8 @@ const EXTRACTION_SCHEMA = `{
     "airConditioners": number,
     "hob": number,
     "ovenMicrowave": number,
-    "warmFloor": number
+    "warmFloor": number,
+    "leakSensor": number
   },
   "notes": ["string"],
   "confidence": number between 0 and 1
@@ -45,14 +47,28 @@ const ROUTING_RULES = `КАК СЧИТАЕТСЯ ДЛИНА КАБЕЛЯ (по �
 нужны именно размеры стен и расстояния по чертежу, а не расстояние напрямую.
 
 Кабели группируются по помещениям: в каждом помещении своя распределительная
-коробка. Щит часто стоит у входа в квартиру.
+коробка. Щит часто стоит у входа в квартиру. По полу кабель почти не ведут —
+там проходят отопление и водоснабжение.
+
+Из щита на каждое помещение уходит один кабель на бытовые розетки и один на
+освещение. Исключение — кухня: на неё всегда идут четыре кабеля (варочная
+поверхность, холодильник, духовой шкаф со СВЧ и остальные розетки кухни).
+Поэтому важно указывать kind: по нему видно кухню.
+
+Розетки внутри помещения разводятся не шлейфом, а от распределительных коробок.
+Софиты одной группы, работающей от одного выключателя, связаны шлейфом от
+светильника к светильнику.
+
+Проходные выключатели проектируют в проходах, особенно длинных, и в спальне:
+один при входе, второй у изголовья кровати. Реже с трёх мест. Отметь такие
+помещения через kind (corridor, bedroom) — система добавит на них кабель.
 
 Поэтому для каждого помещения важно снять с чертежа:
 - габариты (widthMeters x lengthMeters) или площадь;
 - panelToBoxMeters — трассу от щита до распределительной коробки помещения,
   считая по потолку и вдоль стен, а не по прямой;
 - dropMeters — расстояние от потолка до розетки. Обычно указано на чертеже;
-  если на чертеже его нет, оставь поле пустым, и система примет 3 м.
+  если на чертеже его нет, оставь поле пустым, и система примет 3 м с запасом.
 
 ОТДЕЛЬНЫЕ ГРУППЫ (каждая требует своего автомата):
 - Холодильник — fridge
@@ -61,14 +77,16 @@ const ROUTING_RULES = `КАК СЧИТАЕТСЯ ДЛИНА КАБЕЛЯ (по �
   групп, поэтому укажи их количество
 - Варочная поверхность (электроплита) — hob. Единственная группа на кабеле 3*6 мм2
 - Духовой шкаф и СВЧ — ovenMicrowave, это одна объединённая группа
-- Тёплый пол — warmFloor
-Все эти группы идут кабелем ВВГнг 3*2,5 мм2, и только варочная поверхность — 3*6 мм2.
+- Тёплый пол — warmFloor. Своя группа на каждый контур, поэтому укажи число контуров
+- Датчик протечки воды, «нептун» — leakSensor
+Все эти группы идут кабелем ВВГнг 3*2,5 мм2 и автоматом 16А, и только варочная
+поверхность — 3*6 мм2 и автомат 32А. Кондиционер считается до внутреннего блока.
 Ищи эти потребители на плане расстановки мебели, плане розеток и в ведомости
 мебельного наполнения.
 
 ВАЖНО про поле outlets внутри rooms: не включай туда розетки потребителей,
 у которых есть отдельная группа (холодильник, морозильник, кондиционер,
-духовой шкаф со СВЧ) — они попадут в расчёт через dedicatedCircuits.
+духовой шкаф со СВЧ, датчик протечки) — они попадут в расчёт через dedicatedCircuits.
 А вот в общем поле outlets на верхнем уровне учитывай все розетки, включая их.`;
 
 function getOpenAIClient(): OpenAI {
@@ -109,13 +127,43 @@ function positiveOrUndefined(value: unknown): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+const ROOM_KINDS: RoomKind[] = [
+  "kitchen",
+  "corridor",
+  "bedroom",
+  "bathroom",
+  "living",
+  "other",
+];
+
+/** Название помещения как подсказка о типе, когда модель не заполнила kind. */
+const ROOM_KIND_BY_NAME: { kind: RoomKind; pattern: RegExp }[] = [
+  { kind: "kitchen", pattern: /кухн|кухон|столов/i },
+  { kind: "corridor", pattern: /коридор|прихож|холл|тамбур|проход/i },
+  { kind: "bathroom", pattern: /санузел|с\/у|ванн|душев|туалет|уборн/i },
+  { kind: "bedroom", pattern: /спальн|детск/i },
+  { kind: "living", pattern: /гостин|зал|кабинет/i },
+];
+
+function parseRoomKind(raw: unknown, name: string): RoomKind | undefined {
+  if (typeof raw === "string") {
+    const normalized = raw.trim().toLowerCase();
+    const known = ROOM_KINDS.find((kind) => kind === normalized);
+    if (known && known !== "other") return known;
+  }
+  return ROOM_KIND_BY_NAME.find((entry) => entry.pattern.test(name))?.kind;
+}
+
 function parseRooms(rooms: unknown): RoomSpec[] | undefined {
   if (!Array.isArray(rooms)) return undefined;
   const parsed = rooms
     .map((raw, i) => {
       const r = (raw ?? {}) as Record<string, unknown>;
+      const name =
+        typeof r.name === "string" && r.name.trim() ? r.name : `Помещение ${i + 1}`;
       return {
-        name: typeof r.name === "string" && r.name.trim() ? r.name : `Помещение ${i + 1}`,
+        name,
+        kind: parseRoomKind(r.kind, name),
         areaSqM: positiveOrUndefined(r.areaSqM),
         widthMeters: positiveOrUndefined(r.widthMeters),
         lengthMeters: positiveOrUndefined(r.lengthMeters),
@@ -142,6 +190,7 @@ function parseDedicatedCircuits(raw: unknown): DedicatedCircuits | undefined {
     "hob",
     "ovenMicrowave",
     "warmFloor",
+    "leakSensor",
   ];
   const result: DedicatedCircuits = {};
   let any = false;
