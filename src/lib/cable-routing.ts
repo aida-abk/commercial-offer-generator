@@ -110,6 +110,38 @@ function lapLength(perimeter: number, points: number, pointsForFullLap: number):
 }
 
 /**
+ * Шлейф по софитам: от светильника к светильнику.
+ *
+ * В отличие от розеток, софиты не разнесены по периметру, а идут цепочкой, и
+ * цепочка тем длиннее, чем больше светильников. Поэтому ограничения одним
+ * обходом помещения здесь нет: двадцать софитов — это вдвое больше кабеля, чем
+ * десять.
+ */
+function chainLength(step: number, points: number): number {
+  return points <= 0 ? 0 : step * points;
+}
+
+/**
+ * Блоки точек и метраж спусков к ним.
+ *
+ * Розетки и выключатели ставят блоками по несколько штук в ряд. Спуск с
+ * потолка на такой блок один, а внутри блока подрозетники соединены короткими
+ * перемычками. Поэтому подрозетников в смете всегда больше, чем спусков.
+ */
+function blockDrops(
+  points: number,
+  dropMeters: number,
+  rules: CableRoutingRules,
+): { blocks: number; meters: number } {
+  if (points <= 0) return { blocks: 0, meters: 0 };
+  const blocks = Math.ceil(points / Math.max(rules.socketsPerDrop, 1));
+  return {
+    blocks,
+    meters: blocks * dropMeters + (points - blocks) * rules.blockJumpMeters,
+  };
+}
+
+/**
  * Сколько розеток из общего количества занято потребителями с отдельной группой.
  * Варочная поверхность и тёплый пол подключаются напрямую, розетки не занимают,
  * поэтому в вычет не идут.
@@ -121,6 +153,39 @@ export function outletBackedDedicatedCount(circuits: DedicatedCircuits): number 
     (circuits.airConditioners ?? 0) +
     (circuits.ovenMicrowave ?? 0)
   );
+}
+
+/**
+ * Кухонные потребители, которые уже уехали в отдельные группы: варочная
+ * поверхность, холодильник и духовой шкаф со СВЧ. Вместе с группой остальных
+ * кухонных розеток они дают те четыре кабеля, которые всегда идут на кухню.
+ */
+function kitchenDedicatedCount(circuits: DedicatedCircuits): number {
+  return (circuits.hob ?? 0) + (circuits.fridge ?? 0) + (circuits.ovenMicrowave ?? 0);
+}
+
+/**
+ * Сколько розеточных линий уходит от щита в помещение.
+ *
+ * В обычной комнате одна. На кухню идут всегда четыре кабеля, но часть из них
+ * — это отдельные группы техники. Если на чертеже нашли не всю кухонную
+ * технику, недостающие линии добираются группами кухонных розеток, иначе кухня
+ * оказалась бы недосчитана.
+ *
+ * Правило включается только при признаках кухни — хотя бы одном найденном
+ * кухонном потребителе. Иначе в офисе, где кухни нет, помещение, восстановленное
+ * из площади, получило бы четыре лишние линии.
+ */
+function socketLegsForRoom(
+  room: RoomSpec,
+  circuits: DedicatedCircuits,
+  rules: CableRoutingRules,
+): number {
+  const kitchenDedicated = kitchenDedicatedCount(circuits);
+  if (room.kind === "kitchen" && kitchenDedicated > 0) {
+    return Math.max(1, rules.kitchenSocketGroups - kitchenDedicated);
+  }
+  return Math.max(1, room.socketGroups ?? 1);
 }
 
 /**
@@ -181,10 +246,13 @@ export function estimateCableRoute(
   const fallbackRoomArea = project.totalAreaSqM / Math.max(rooms.length, 1);
   const defaultPanelToRoom = estimatePanelToRoom(project.totalAreaSqM, rules);
 
+  const circuits = resolveDedicatedCircuits(project);
   const legs: CableRouteLeg[] = [];
   let cable15 = 0;
   let cable25 = 0;
   let cableUtp = 0;
+  let socketLegCount = 0;
+  let lightLegCount = 0;
 
   for (const room of rooms) {
     const perimeter = roomPerimeter(room, fallbackRoomArea);
@@ -195,18 +263,29 @@ export function estimateCableRoute(
     if (room.outlets > 0) {
       // Розетки идут не шлейфом, а от распределительных коробок: коробки связаны
       // между собой по стенам, а к каждой розетке от коробки свой спуск.
-      const horizontal = lapLength(perimeter, room.outlets, rules.pointsForFullLap);
-      const drops = room.outlets * drop;
-      const total = panelToBox + horizontal + drops;
-      cable25 += total;
-      legs.push({
-        label: `${room.name}: розетки`,
-        panelToBoxMeters: panelToBox,
-        horizontalMeters: horizontal,
-        dropMeters: drops,
-        pointCount: room.outlets,
-        totalMeters: total,
-      });
+      // Каждая розеточная линия — своя трасса от щита, поэтому кухня с её
+      // несколькими группами считается по каждой линии отдельно.
+      const legCount = socketLegsForRoom(room, circuits, rules);
+      const perLeg = spread(room.outlets, legCount).filter((n) => n > 0);
+
+      for (const [index, outlets] of perLeg.entries()) {
+        const { blocks, meters: drops } = blockDrops(outlets, drop, rules);
+        const horizontal = lapLength(perimeter, blocks, rules.pointsForFullLap);
+        const total = panelToBox + horizontal + drops;
+        cable25 += total;
+        socketLegCount += 1;
+        legs.push({
+          label:
+            perLeg.length > 1
+              ? `${room.name}: розетки, группа ${index + 1}`
+              : `${room.name}: розетки`,
+          panelToBoxMeters: panelToBox,
+          horizontalMeters: horizontal,
+          dropMeters: drops,
+          pointCount: outlets,
+          totalMeters: total,
+        });
+      }
     }
 
     if (room.lightPoints > 0 || room.switches > 0) {
@@ -219,16 +298,20 @@ export function estimateCableRoute(
         room.kind !== undefined &&
         rules.twoWaySwitchRoomKinds.includes(room.kind);
 
+      // Выключатели тоже ставят блоками: на двухклавишный блок спуск один.
+      const switchBlocks = blockDrops(room.switches, drop, rules);
+
       const horizontal =
-        lapLength(perimeter, room.lightPoints, rules.pointsForFullLap) +
-        room.switches * step +
+        chainLength(step, room.lightPoints) +
+        switchBlocks.blocks * step +
         (twoWay ? step : 0);
       const drops =
         room.lightPoints * rules.lightDropMeters +
-        room.switches * drop +
+        switchBlocks.meters +
         (twoWay ? 2 * drop : 0);
       const total = panelToBox + horizontal + drops;
       cable15 += total;
+      lightLegCount += 1;
       legs.push({
         label: `${room.name}: свет и выключатели${twoWay ? " (проходные)" : ""}`,
         panelToBoxMeters: panelToBox,
@@ -262,10 +345,15 @@ export function estimateCableRoute(
   }
 
   // Отдельные группы идут от щита напрямую к потребителю.
-  const circuits = resolveDedicatedCircuits(project);
   let cable6 = 0;
   for (const row of listDedicatedCircuits(circuits, dedicatedLabels)) {
-    const runLength = defaultPanelToRoom + rules.defaultDropMeters;
+    // Кабель 3*6 берут куском: трасса до кухни короче минимального заказа.
+    const runLength = row.cable6
+      ? Math.max(
+          defaultPanelToRoom + rules.defaultDropMeters,
+          rules.cable6MinMetersPerCircuit,
+        )
+      : defaultPanelToRoom + rules.defaultDropMeters;
     const total = row.count * runLength;
     if (row.cable6) cable6 += total;
     else cable25 += total;
@@ -288,7 +376,7 @@ export function estimateCableRoute(
     legs,
     roomsEstimated,
     roomCount: rooms.length,
-    socketGroups: rooms.filter((r) => r.outlets > 0).length,
-    lightGroups: rooms.filter((r) => r.lightPoints > 0 || r.switches > 0).length,
+    socketGroups: socketLegCount,
+    lightGroups: lightLegCount,
   };
 }
