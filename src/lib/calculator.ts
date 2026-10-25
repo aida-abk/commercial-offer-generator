@@ -29,10 +29,6 @@ export function roundTo(value: number, step: number): number {
   return Math.ceil(value / step) * step;
 }
 
-/** Ширина аппаратов щита в модулях: нужна для подбора корпуса. */
-const PANEL_CONTACTOR_MODULES = 2;
-const PANEL_VOLTAGE_RELAY_MODULES = 3;
-
 /** Round to nearest step (used for cable meters in КП examples). */
 export function roundNearest(value: number, step: number): number {
   if (step <= 0) return Math.round(value);
@@ -45,15 +41,17 @@ const DEFAULT_ROUTING: CableRoutingRules = {
   enabled: true,
   defaultDropMeters: 3,
   lightDropMeters: 0.5,
-  defaultRoomAreaSqM: 18,
+  defaultRoomAreaSqM: 14,
   minRooms: 3,
   pointsForFullLap: 4,
+  kitchenSocketGroups: 4,
+  twoWaySwitchRoomKinds: ["corridor", "bedroom"],
   defaultCeilingHeightMeters: 2.7,
   panelToRoomBaseMeters: 5.5,
   panelToRoomPerSpanMeters: 1.25,
   panelToRoomMinMeters: 5,
   panelToRoomMaxMeters: 30,
-  wasteFactor: 1.1,
+  wasteFactor: 1.04,
   utpHomeRun: true,
 };
 
@@ -67,6 +65,7 @@ const DEFAULT_DEDICATED: DedicatedCircuitRules = {
     hob: "Варочная поверхность",
     ovenMicrowave: "Духовой шкаф + СВЧ",
     warmFloor: "Тёплый пол",
+    leakSensor: "Датчик протечки воды",
   },
 };
 
@@ -241,10 +240,14 @@ function computeQuantities(project: ExtractedProject) {
   const sleeveGml10 = sleeveQty("gml10");
   const sleeveGml16 = sleeveQty("gml16");
 
-  const bulbs = Math.max(
-    roundTo(num(f.bulbs, "perLight") * lights, r.countItems),
-    num(f.bulbs, "min"),
-  );
+  // Временный свет на время монтажа: по 3-4 патрона с лампочкой на комнату,
+  // а не по одному на каждую проектную световую точку.
+  const bulbsPerRoom = num(f.bulbs, "perRoom", 0);
+  const bulbsRaw =
+    bulbsPerRoom > 0 && cableRoute
+      ? bulbsPerRoom * cableRoute.roomCount
+      : num(f.bulbs, "perLight") * lights;
+  const bulbs = Math.max(Math.round(bulbsRaw), num(f.bulbs, "min"));
 
   const trashBags = Math.max(
     roundTo(num(f.trashBags, "perAreaSqM") * area, r.countItems),
@@ -262,28 +265,17 @@ function computeQuantities(project: ExtractedProject) {
   // в общие розеточные группы они второй раз не попадают.
   const genericOutlets = Math.max(0, outlets - outletBackedDedicatedCount(dedicated));
 
-  const lightGroups = Math.max(1, Math.ceil(lights / 8));
-  const outletGroups = Math.max(1, Math.ceil(genericOutlets / 6));
+  // Одна розеточная группа и одна группа освещения на каждое помещение.
+  // Кухне нужны четыре розеточные группы, но варочная поверхность, холодильник
+  // и духовой шкаф со СВЧ приходят отдельными группами ниже, поэтому по
+  // помещению здесь считается только группа остальных розеток.
+  const lightGroups = cableRoute?.lightGroups ?? Math.max(1, Math.ceil(lights / 8));
+  const outletGroups = cableRoute?.socketGroups ?? Math.max(1, Math.ceil(genericOutlets / 6));
 
-  // Типовой шаблон щита по площади. Отключён, потому что не умеет добавлять
-  // группы выделенных потребителей — их даёт dedicatedCircuits.
-  type PanelTemplateTier = { maxAreaSqM: number; panelModules?: string };
-  const templateConfig = f.panelTemplate as
-    | { enabled?: boolean; tiers?: PanelTemplateTier[] }
-    | undefined;
-  const template =
-    templateConfig?.enabled === false
-      ? undefined
-      : templateConfig?.tiers?.find((t) => area <= t.maxAreaSqM);
-
-  let breakers10 = template
-    ? num(template, "breakers10a")
-    : num(f.breakers10a, "base") + num(f.breakers10a, "perLightGroup") * lightGroups;
-  let breakers16 = template
-    ? num(template, "breakers16a")
-    : num(f.breakers16a, "base") + num(f.breakers16a, "perOutletGroup") * outletGroups;
-  let breakers32 = template ? num(template, "breakers32a") : num(f.breakers32a, "fixed");
-  let breakers50 = template ? num(template, "breakers50a") : num(f.breakers50a, "fixed");
+  let breakers10 = num(f.breakers10a, "base") + num(f.breakers10a, "perRoom") * lightGroups;
+  let breakers16 = num(f.breakers16a, "base") + num(f.breakers16a, "perRoom") * outletGroups;
+  let breakers32 = num(f.breakers32a, "fixed");
+  let breakers50 = num(f.breakers50a, "fixed");
 
   if (project.estimatedCircuits?.length) {
     breakers10 = 0;
@@ -311,38 +303,16 @@ function computeQuantities(project: ExtractedProject) {
   breakers32 = roundTo(breakers32, 1) + dedicatedAmpCounts[32];
   breakers50 = roundTo(breakers50, 1) + dedicatedAmpCounts[50];
 
-  const rcdCount = template
-    ? num(template, "rcd")
-    : Math.min(
-        Math.max(Math.round(num(f.rcd, "perAreaSqM") * area), num(f.rcd, "min")),
-        num(f.rcd, "max"),
-      );
+  // На одно УЗО подвязывают 3-4 автомата 16А, то есть только розеточные группы.
+  const rcdCount = Math.max(
+    num(f.rcd, "min"),
+    Math.round(breakers16 / num(f.rcd, "breakers16PerRcd", 4)),
+  );
 
   const fixed = rules.fixedItems;
 
   // Занятость щита в модулях: однополюсные автоматы по одному модулю,
   // двухполюсный ввод и УЗО по два, контактор два, реле напряжения три.
-  const panelSize = f.panelSize as {
-    fillFactor?: number;
-    thresholds: { modules: number; panelId: string }[];
-  };
-  const usedModules =
-    breakers10 +
-    breakers16 +
-    breakers32 +
-    breakers50 * 2 +
-    rcdCount * 2 +
-    PANEL_CONTACTOR_MODULES +
-    PANEL_VOLTAGE_RELAY_MODULES;
-  // Щит берут с запасом под доработки, поэтому заполняем его не под завязку.
-  const fillFactor = panelSize.fillFactor ?? 0.7;
-  const sorted = [...panelSize.thresholds].sort((a, b) => a.modules - b.modules);
-  const chosen =
-    sorted.find((t) => usedModules <= t.modules * fillFactor) ?? sorted[sorted.length - 1];
-
-  const panelModules = String(chosen.modules);
-  const panelSizeKey = chosen.panelId;
-
   const largeProjectRule = f.largeProject as
     | {
         minOutlets?: number;
@@ -361,14 +331,14 @@ function computeQuantities(project: ExtractedProject) {
 
   let voltageRelayQty = 1;
   let terminalBlockCount = 0;
-  let resolvedPanelModules = template?.panelModules ?? panelModules;
   let resolvedRcdCount = rcdCount;
+  let largePanelModules: string | undefined;
 
   if (isLargeProject && largeProjectRule) {
     resolvedRcdCount = largeProjectRule.rcdCount ?? resolvedRcdCount;
     voltageRelayQty = largeProjectRule.voltageRelayQty ?? 3;
     terminalBlockCount = largeProjectRule.terminalBlocks ?? 0;
-    resolvedPanelModules = largeProjectRule.panelModules ?? resolvedPanelModules;
+    largePanelModules = largeProjectRule.panelModules;
     if (largeProjectRule.cable25Multiplier) {
       cable25 = roundNearest(cable25 * largeProjectRule.cable25Multiplier, r.cableMeters);
     }
@@ -389,6 +359,32 @@ function computeQuantities(project: ExtractedProject) {
   if (isLargeProject && largeProjectRule?.clipsPacks) {
     clips = largeProjectRule.clipsPacks;
   }
+
+  const panelSize = f.panelSize as {
+    spareModules?: number;
+    moduleWidths?: Record<string, number>;
+    thresholds: { modules: number; panelId: string }[];
+  };
+  const moduleWidth = (key: string, fallback: number) =>
+    panelSize.moduleWidths?.[key] ?? fallback;
+
+  // Занятость щита в модулях: однополюсный автомат — один модуль, двухполюсный
+  // ввод, реле напряжения, контактор и УЗО — по два, колодка РБД — полтора.
+  const usedModules =
+    (breakers10 + breakers16 + breakers32) * moduleWidth("breaker1p", 1) +
+    breakers50 * moduleWidth("breaker2p", 2) +
+    resolvedRcdCount * moduleWidth("rcd", 2) +
+    moduleWidth("contactor", 2) +
+    voltageRelayQty * moduleWidth("voltageRelay", 2) +
+    terminalBlockCount * moduleWidth("terminalBlock", 1.5);
+
+  // Корпус берут по занятости плюс запас под доработки.
+  const requiredModules = usedModules + (panelSize.spareModules ?? 12);
+  const sortedPanels = [...panelSize.thresholds].sort((a, b) => a.modules - b.modules);
+  const chosenPanel =
+    sortedPanels.find((t) => requiredModules <= t.modules) ??
+    sortedPanels[sortedPanels.length - 1];
+  const resolvedPanelModules = largePanelModules ?? String(chosenPanel.modules);
 
   return {
     cable2x15,

@@ -5,6 +5,7 @@ import type {
   DedicatedCircuits,
   DedicatedCircuitRules,
   ExtractedProject,
+  RoomKind,
   RoomSpec,
 } from "./types";
 
@@ -57,6 +58,20 @@ function spread(total: number, buckets: number): number[] {
   return Array.from({ length: buckets }, (_, i) => base + (i < remainder ? 1 : 0));
 }
 
+/**
+ * Типовой состав квартиры, когда помещения восстанавливаются из площади.
+ * Кухня, коридор и санузел есть всегда, дальше добавляются гостиная и спальни.
+ * Тип важен: на кухню уходит четыре розеточные группы, а в коридоре и спальне
+ * проектируют проходные выключатели.
+ */
+function synthesizeRoomKinds(count: number): RoomKind[] {
+  const kinds: RoomKind[] = ["kitchen", "corridor", "bathroom", "living"];
+  while (kinds.length < count) {
+    kinds.push(kinds.length % 3 === 0 ? "bathroom" : "bedroom");
+  }
+  return kinds.slice(0, count);
+}
+
 function synthesizeRooms(
   project: ExtractedProject,
   rules: CableRoutingRules,
@@ -71,9 +86,11 @@ function synthesizeRooms(
   const lights = spread(project.lightPoints, count);
   const utp = spread(project.utpPoints, count);
   const roomArea = project.totalAreaSqM / count;
+  const kinds = synthesizeRoomKinds(count);
 
   return Array.from({ length: count }, (_, i) => ({
     name: `Помещение ${i + 1}`,
+    kind: kinds[i],
     areaSqM: roomArea,
     outlets: outlets[i],
     switches: switches[i],
@@ -123,12 +140,14 @@ export function listDedicatedCircuits(
   circuits: DedicatedCircuits,
   labels: DedicatedCircuitRules["labels"],
 ): { key: keyof DedicatedCircuits; label: string; count: number; cable6: boolean }[] {
+  // Порядок как в щите: сначала кухня, затем климат, протечка и тёплый пол.
   const order: (keyof DedicatedCircuits)[] = [
+    "hob",
     "fridge",
+    "ovenMicrowave",
     "freezer",
     "airConditioners",
-    "hob",
-    "ovenMicrowave",
+    "leakSensor",
     "warmFloor",
   ];
   return order
@@ -174,6 +193,8 @@ export function estimateCableRoute(
     const drop = room.dropMeters ?? rules.defaultDropMeters;
 
     if (room.outlets > 0) {
+      // Розетки идут не шлейфом, а от распределительных коробок: коробки связаны
+      // между собой по стенам, а к каждой розетке от коробки свой спуск.
       const horizontal = lapLength(perimeter, room.outlets, rules.pointsForFullLap);
       const drops = room.outlets * drop;
       const total = panelToBox + horizontal + drops;
@@ -189,15 +210,27 @@ export function estimateCableRoute(
     }
 
     if (room.lightPoints > 0 || room.switches > 0) {
-      // Светильники на потолке — спуск минимальный, выключатели на стене — полный.
+      // Софиты одной группы связаны шлейфом от светильника к светильнику, спуск
+      // на подключение минимальный. Выключатели на стене — полный спуск.
+      // В коридоре и спальне ставят проходные выключатели: второй добавляет
+      // подъём от первого, трассу по потолку и спуск к себе.
+      const twoWay =
+        room.switches > 0 &&
+        room.kind !== undefined &&
+        rules.twoWaySwitchRoomKinds.includes(room.kind);
+
       const horizontal =
         lapLength(perimeter, room.lightPoints, rules.pointsForFullLap) +
-        room.switches * step;
-      const drops = room.lightPoints * rules.lightDropMeters + room.switches * drop;
+        room.switches * step +
+        (twoWay ? step : 0);
+      const drops =
+        room.lightPoints * rules.lightDropMeters +
+        room.switches * drop +
+        (twoWay ? 2 * drop : 0);
       const total = panelToBox + horizontal + drops;
       cable15 += total;
       legs.push({
-        label: `${room.name}: свет и выключатели`,
+        label: `${room.name}: свет и выключатели${twoWay ? " (проходные)" : ""}`,
         panelToBoxMeters: panelToBox,
         horizontalMeters: horizontal,
         dropMeters: drops,
@@ -254,5 +287,8 @@ export function estimateCableRoute(
     cableUtp: cableUtp * waste,
     legs,
     roomsEstimated,
+    roomCount: rooms.length,
+    socketGroups: rooms.filter((r) => r.outlets > 0).length,
+    lightGroups: rooms.filter((r) => r.lightPoints > 0 || r.switches > 0).length,
   };
 }
