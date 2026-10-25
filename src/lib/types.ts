@@ -101,6 +101,11 @@ export interface ExtractedProject {
   airConditioners?: number;
   /** Отдельная группа на «Нептун» (датчик протечки воды). */
   leakSensor?: boolean;
+  /**
+   * Трёхфазный ввод 380 В: вводной автомат на четыре полюса, по реле контроля
+   * напряжения на каждую фазу, а УЗО трёхполюсные и занимают вдвое больше места.
+   */
+  threePhase?: boolean;
   /** Откуда взята общая площадь: из экспликации, сложена из помещений или не найдена. */
   areaSource?: "explication" | "rooms" | "unknown";
   estimatedCircuits?: { amps: 10 | 16 | 32 | 50; count: number }[];
@@ -225,15 +230,34 @@ export interface RouteGeometry {
 /** Ширина аппаратов в модулях — по ней подбирается корпус щита. */
 export interface PanelModuleWidths {
   inputBreaker2p: number;
+  /** Вводной автомат трёхфазного щита: четыре полюса — четыре модуля. */
+  inputBreaker4p?: number;
   voltageRelay: number;
   contactor: number;
   rcd: number;
+  /** УЗО трёхфазного щита: три полюса с нулём. */
+  rcd3p?: number;
   breaker1p: number;
   terminalRbd: number;
+  /** Нулевая шина тоже стоит на рейке и занимает место. */
+  neutralBus?: number;
   /** Свободных модулей в запас. */
   spare: number;
   /** Доступные типоразмеры корпуса. */
   sizes: number[];
+}
+
+/** Что стоит в щите — вход для подсчёта занятых модулей. */
+export interface PanelComposition {
+  /** Однополюсные автоматы групп: 10, 16, 25 и 32 А. */
+  breakers1p: number;
+  inputBreakers: number;
+  rcd: number;
+  contactor: number;
+  voltageRelay: number;
+  terminalRbd: number;
+  neutralBus: number;
+  threePhase: boolean;
 }
 
 export interface CalculationRules {

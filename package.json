@@ -16,7 +16,9 @@
     "calibrate": "tsx scripts/calibrate-materials.ts",
     "debug:plan": "tsx scripts/debug-plan.ts",
     "debug:panels": "tsx scripts/debug-panels.ts",
-    "debug:extract": "tsx --env-file=.env scripts/debug-extract.ts"
+    "debug:extract": "tsx --env-file=.env scripts/debug-extract.ts",
+    "extract:kp": "tsx scripts/extract-kp-actuals.ts",
+    "benchmark:panel": "tsx scripts/benchmark-panel.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
