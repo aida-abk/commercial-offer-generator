@@ -75,6 +75,11 @@ export interface ExtractedProject {
   ceilingHeightMeters?: number;
   /** Где расположен щит — влияет на длину трасс до помещений. */
   panelLocation?: string;
+  /**
+   * Трёхфазный ввод (380 В, вводной автомат на четыре полюса). Тогда в щите
+   * три реле контроля напряжения, а УЗО занимают по четыре модуля.
+   */
+  threePhase?: boolean;
   rooms?: RoomSpec[];
   dedicatedCircuits?: DedicatedCircuits;
   estimatedCircuits?: { amps: 10 | 16 | 32 | 50; count: number }[];
@@ -250,6 +255,23 @@ export interface CableRoutingRules {
   wasteFactor: number;
   /** UTP разводится звездой от щита, а не шлейфом. */
   utpHomeRun: boolean;
+}
+
+export interface RcdRules {
+  /** Сколько автоматов 16А подвязывают на одно УЗО. */
+  breakers16PerRcd?: number;
+  min?: number;
+}
+
+export interface PanelSizeRules {
+  /** Запас модулей под будущие доработки поверх фактической занятости. */
+  spareModules?: number;
+  /** Ширина аппаратов в модулях: автомат 1п — 1, УЗО — 2, колодка РБД — 1,5. */
+  moduleWidths?: Record<string, number>;
+  /** Колодки РБД и нулевые шины стоят в щите всегда и тоже занимают рейку. */
+  terminalBlocks?: number;
+  busBars?: number;
+  thresholds: { modules: number; panelId: string }[];
 }
 
 export interface DedicatedCircuitRules {

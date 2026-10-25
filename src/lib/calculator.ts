@@ -10,6 +10,7 @@ import {
   loadPanelBrands,
   loadPriceCatalog,
 } from "./catalog";
+import { choosePanel, countModules, countRcd } from "./panel-sizing";
 import type {
   BrandVariants,
   CableRouteEstimate,
@@ -18,6 +19,8 @@ import type {
   DedicatedCircuitRules,
   ExtractedProject,
   LineItem,
+  PanelSizeRules,
+  RcdRules,
   MultiBrandCalculationResult,
   PanelBrandConfig,
   PanelBrandId,
@@ -303,16 +306,10 @@ function computeQuantities(project: ExtractedProject) {
   breakers32 = roundTo(breakers32, 1) + dedicatedAmpCounts[32];
   breakers50 = roundTo(breakers50, 1) + dedicatedAmpCounts[50];
 
-  // На одно УЗО подвязывают 3-4 автомата 16А, то есть только розеточные группы.
-  const rcdCount = Math.max(
-    num(f.rcd, "min"),
-    Math.round(breakers16 / num(f.rcd, "breakers16PerRcd", 4)),
-  );
+  const rcdCount = countRcd(breakers16, f.rcd as RcdRules);
 
   const fixed = rules.fixedItems;
 
-  // Занятость щита в модулях: однополюсные автоматы по одному модулю,
-  // двухполюсный ввод и УЗО по два, контактор два, реле напряжения три.
   const largeProjectRule = f.largeProject as
     | {
         minOutlets?: number;
@@ -329,15 +326,19 @@ function computeQuantities(project: ExtractedProject) {
     | undefined;
   const isLargeProject = outlets >= (largeProjectRule?.minOutlets ?? Number.MAX_SAFE_INTEGER);
 
-  let voltageRelayQty = 1;
-  let terminalBlockCount = 0;
+  const panelSize = f.panelSize as PanelSizeRules;
+
+  // На трёхфазном вводе ставят по реле контроля напряжения на каждую фазу.
+  const threePhase = project.threePhase === true;
+  let voltageRelayQty = threePhase ? 3 : 1;
+  let terminalBlockCount = panelSize.terminalBlocks ?? 4;
   let resolvedRcdCount = rcdCount;
   let largePanelModules: string | undefined;
 
   if (isLargeProject && largeProjectRule) {
     resolvedRcdCount = largeProjectRule.rcdCount ?? resolvedRcdCount;
-    voltageRelayQty = largeProjectRule.voltageRelayQty ?? 3;
-    terminalBlockCount = largeProjectRule.terminalBlocks ?? 0;
+    voltageRelayQty = largeProjectRule.voltageRelayQty ?? voltageRelayQty;
+    terminalBlockCount = largeProjectRule.terminalBlocks ?? terminalBlockCount;
     largePanelModules = largeProjectRule.panelModules;
     if (largeProjectRule.cable25Multiplier) {
       cable25 = roundNearest(cable25 * largeProjectRule.cable25Multiplier, r.cableMeters);
@@ -360,31 +361,21 @@ function computeQuantities(project: ExtractedProject) {
     clips = largeProjectRule.clipsPacks;
   }
 
-  const panelSize = f.panelSize as {
-    spareModules?: number;
-    moduleWidths?: Record<string, number>;
-    thresholds: { modules: number; panelId: string }[];
-  };
-  const moduleWidth = (key: string, fallback: number) =>
-    panelSize.moduleWidths?.[key] ?? fallback;
-
-  // Занятость щита в модулях: однополюсный автомат — один модуль, двухполюсный
-  // ввод, реле напряжения, контактор и УЗО — по два, колодка РБД — полтора.
-  const usedModules =
-    (breakers10 + breakers16 + breakers32) * moduleWidth("breaker1p", 1) +
-    breakers50 * moduleWidth("breaker2p", 2) +
-    resolvedRcdCount * moduleWidth("rcd", 2) +
-    moduleWidth("contactor", 2) +
-    voltageRelayQty * moduleWidth("voltageRelay", 2) +
-    terminalBlockCount * moduleWidth("terminalBlock", 1.5);
-
-  // Корпус берут по занятости плюс запас под доработки.
-  const requiredModules = usedModules + (panelSize.spareModules ?? 12);
-  const sortedPanels = [...panelSize.thresholds].sort((a, b) => a.modules - b.modules);
-  const chosenPanel =
-    sortedPanels.find((t) => requiredModules <= t.modules) ??
-    sortedPanels[sortedPanels.length - 1];
-  const resolvedPanelModules = largePanelModules ?? String(chosenPanel.modules);
+  const usedModules = countModules(
+    {
+      breakers1p: breakers10 + breakers16 + breakers32,
+      inputPoles: breakers50 * (threePhase ? 4 : 2),
+      rcd: resolvedRcdCount,
+      contactor: 1,
+      voltageRelay: voltageRelayQty,
+      terminalBlocks: terminalBlockCount,
+      busBars: panelSize.busBars ?? 2,
+      threePhase,
+    },
+    panelSize,
+  );
+  const resolvedPanelModules =
+    largePanelModules ?? String(choosePanel(usedModules, panelSize).modules);
 
   return {
     cable2x15,
