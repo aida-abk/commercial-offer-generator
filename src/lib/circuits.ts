@@ -5,6 +5,8 @@ import type {
   Circuit,
   CircuitPlan,
   ExtractedProject,
+  PanelComposition,
+  PanelModuleWidths,
   RouteGeometry,
   Room,
 } from "./types";
@@ -227,8 +229,48 @@ function tempBulbCount(rooms: Room[]): number {
   }, 0);
 }
 
+export interface RcdRule {
+  /** Сколько розеточных групп подвязывают на одно УЗО. */
+  perSocketGroups?: number;
+  min?: number;
+}
+
+/**
+ * Число УЗО по розеточным группам.
+ *
+ * Инженеры говорят «3-4 автомата 16А на одно УЗО». По готовым КП измеренное
+ * отношение — около 4,3, и округление к ближайшему попадает в фактические
+ * количества заметно точнее округления вверх: с округлением вверх от четырёх
+ * щит получает лишнее УЗО почти на каждом втором проекте.
+ */
+export function countRcd(socketGroups: number, rule: RcdRule | undefined): number {
+  const perRcd = rule?.perSocketGroups ?? 4.5;
+  return Math.max(rule?.min ?? 1, Math.round(socketGroups / perRcd));
+}
+
+/** Сколько модулей DIN-рейки занимает начинка щита. */
+export function countPanelModules(c: PanelComposition, w: PanelModuleWidths): number {
+  const inputWidth = c.threePhase ? (w.inputBreaker4p ?? 4) : w.inputBreaker2p;
+  const rcdWidth = c.threePhase ? (w.rcd3p ?? w.rcd * 2) : w.rcd;
+  return (
+    c.inputBreakers * inputWidth +
+    c.voltageRelay * w.voltageRelay +
+    c.contactor * w.contactor +
+    c.rcd * rcdWidth +
+    c.breakers1p * w.breaker1p +
+    c.terminalRbd * w.terminalRbd +
+    c.neutralBus * (w.neutralBus ?? w.terminalRbd)
+  );
+}
+
+/** Корпус подбирается по занятости плюс свободный запас под доработки. */
+export function choosePanelSize(usedModules: number, w: PanelModuleWidths): number {
+  const needed = Math.ceil(usedModules + w.spare);
+  return w.sizes.find((size) => size >= needed) ?? w.sizes[w.sizes.length - 1];
+}
+
 /** Собирает щит: автоматы, УЗО, ширина корпуса в модулях. */
-function buildPanel(circuits: Circuit[]) {
+function buildPanel(circuits: Circuit[], threePhase: boolean) {
   const rules = loadCalculationRules();
   const w = rules.panelModuleWidths;
 
@@ -237,25 +279,23 @@ function buildPanel(circuits: Circuit[]) {
   const breakers32a = circuits.filter((c) => c.breakerAmps === 32).length;
   const rcdGroups = circuits.filter((c) => c.needsRcd).length;
 
-  // На одно УЗО подвязываются 3–4 автомата 16А.
-  const rcdRule = rules.formulas.rcd as { perSocketGroups?: number; min?: number } | undefined;
-  const perRcd = rcdRule?.perSocketGroups ?? 4;
-  const rcdCount = Math.max(rcdRule?.min ?? 1, Math.ceil(rcdGroups / perRcd));
+  const rcdCount = countRcd(rcdGroups, rules.formulas.rcd as RcdRule | undefined);
 
-  const rbdCount =
-    (rules.fixedItems.terminalRed ?? 0) + (rules.fixedItems.terminalBlue ?? 0);
-
-  const usedModules =
-    w.inputBreaker2p +
-    w.voltageRelay +
-    w.contactor +
-    rcdCount * w.rcd +
-    (breakers10a + breakers16a + breakers32a) * w.breaker1p +
-    rbdCount * w.terminalRbd;
-
-  // Корпус подбирается по факту + свободный запас.
-  const needed = Math.ceil(usedModules + w.spare);
-  const panelSize = w.sizes.find((size) => size >= needed) ?? w.sizes[w.sizes.length - 1];
+  const usedModules = countPanelModules(
+    {
+      breakers1p: breakers10a + breakers16a + breakers32a,
+      inputBreakers: 1,
+      rcd: rcdCount,
+      contactor: rules.fixedItems.contactor ?? 1,
+      // На трёхфазном вводе ставят по реле контроля напряжения на каждую фазу.
+      voltageRelay: threePhase ? 3 : (rules.fixedItems.voltageRelay ?? 1),
+      terminalRbd:
+        (rules.fixedItems.terminalRed ?? 0) + (rules.fixedItems.terminalBlue ?? 0),
+      neutralBus: rules.fixedItems.neutralBus ?? 0,
+      threePhase,
+    },
+    w,
+  );
 
   return {
     breakers10a,
@@ -263,7 +303,7 @@ function buildPanel(circuits: Circuit[]) {
     breakers32a,
     rcdCount,
     panelModules: Math.ceil(usedModules),
-    panelSize,
+    panelSize: choosePanelSize(usedModules, w),
   };
 }
 
@@ -290,7 +330,7 @@ export function buildCircuitPlan(project: ExtractedProject): CircuitPlan {
     utp: roundMeters(raw.utp * waste, r.utpMeters ?? r.cableMeters),
   };
 
-  const panel = buildPanel(circuits);
+  const panel = buildPanel(circuits, project.threePhase === true);
 
   const socketPoints = rooms.reduce((s, r2) => s + r2.outlets, 0);
   const switchPoints = rooms.reduce(

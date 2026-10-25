@@ -36,6 +36,7 @@ const EXTRACTION_SCHEMA = `{
     }
   ],
   "leakSensor": boolean,
+  "threePhase": boolean,
   "areaSource": "explication | plan | unknown — откуда взята общая площадь",
   "notes": ["string"],
   "confidence": number between 0 and 1
@@ -72,6 +73,7 @@ const DOMAIN_RULES = [
   "airConditioners — внутренние блоки кондиционера в этом помещении.",
   "utpPoints — точки UTP: в квартирах это ТВ-зоны, плюс кабинет. Обычно 1-3 точки на объект.",
   "leakSensor — есть ли датчик протечки воды («Нептун»).",
+  "threePhase — трёхфазный ввод 380 В. На схеме щита это вводной автомат на четыре полюса и три реле контроля напряжения. Если ввод однофазный (вводной автомат 2п) — false.",
   "projectName и clientName пиши ПО-РУССКИ, как они написаны в проекте (ЖК «София», а не Sofiya). " +
     "Если заказчик в проекте не указан — верни пустую строку. Никаких Unknown, N/A и прочих заглушек.",
   "notes пиши на русском языке.",
@@ -170,6 +172,7 @@ function parseExtractedJson(raw: string): ExtractedProject {
     warmFloorCircuits: toInt(parsed.warmFloorCircuits),
     rooms: rooms.length > 0 ? rooms : undefined,
     leakSensor: parsed.leakSensor !== false,
+    threePhase: parsed.threePhase === true,
     notes,
     confidence: typeof parsed.confidence === "number" ? parsed.confidence : undefined,
   };
@@ -347,6 +350,9 @@ export function mergeProjects(parts: ExtractedProject[]): ExtractedProject {
             : "unknown",
       rooms,
       leakSensor: acc.leakSensor || part.leakSensor,
+      // Схема щита попадается лишь на одном листе, поэтому признак берётся
+      // с того листа, где он нашёлся.
+      threePhase: acc.threePhase || part.threePhase,
       notes: [...new Set([...acc.notes, ...part.notes])],
       confidence:
         acc.confidence !== undefined && part.confidence !== undefined
