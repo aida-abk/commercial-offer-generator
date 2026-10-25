@@ -14,7 +14,8 @@
     "benchmark": "tsx scripts/benchmark-kp-examples.ts",
     "compare:sofia": "tsx scripts/compare-sofia.ts",
     "benchmark:cable": "tsx scripts/benchmark-cable-routing.ts",
-    "extract:kp": "tsx scripts/extract-kp-cables.ts"
+    "extract:kp": "tsx scripts/extract-kp-cables.ts",
+    "benchmark:panel": "tsx scripts/benchmark-panel.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",

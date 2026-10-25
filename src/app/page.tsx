@@ -28,10 +28,12 @@ const emptyManual: ExtractedProject = {
   projectName: "",
   clientName: "",
   totalAreaSqM: 90,
-  outlets: 50,
-  switches: 25,
-  lightPoints: 13,
-  utpPoints: 4,
+  // Типовая квартира 90 м²: шесть помещений, около 0,55 световой точки на м².
+  roomCount: 6,
+  outlets: 60,
+  switches: 12,
+  lightPoints: 50,
+  utpPoints: 2,
   warmFloorCircuits: 0,
   dedicatedCircuits: {},
   notes: [],
@@ -396,6 +398,7 @@ export default function HomePage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 {(
                   [
+                    ["roomCount", "Помещений"],
                     ["outlets", "Розетки"],
                     ["switches", "Выключатели"],
                     ["lightPoints", "Точки света"],

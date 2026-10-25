@@ -77,9 +77,13 @@ function synthesizeRooms(
   rules: CableRoutingRules,
   genericOutlets: number,
 ): RoomSpec[] {
+  // Число помещений с чертежа надёжнее оценки по площади: по готовым КП площадь
+  // на помещение гуляет от 11 до 24 м², то есть оценка врёт примерно на комнату.
   const count = Math.max(
     rules.minRooms,
-    Math.round(project.totalAreaSqM / rules.defaultRoomAreaSqM) || rules.minRooms,
+    project.roomCount ||
+      Math.round(project.totalAreaSqM / rules.defaultRoomAreaSqM) ||
+      rules.minRooms,
   );
   const outlets = spread(genericOutlets, count);
   const switches = spread(project.switches, count);
@@ -189,6 +193,42 @@ function socketLegsForRoom(
 }
 
 /**
+ * Сколько розеточных линий уходит в каждое помещение.
+ *
+ * Если на чертеже разбивка по группам есть, она и используется. Если нет,
+ * общее число групп добирается до типового: в готовых КП на помещение выходит
+ * около двух с половиной групп 16А, считая кухонные и группы техники. Добор
+ * раскидывается по помещениям, кроме кухни, — у неё своё правило.
+ */
+function socketLegsPerRoom(
+  rooms: RoomSpec[],
+  circuits: DedicatedCircuits,
+  rules: CableRoutingRules,
+): number[] {
+  const legs = rooms.map((room) => socketLegsForRoom(room, circuits, rules));
+  if (rooms.some((room) => room.socketGroups !== undefined)) return legs;
+
+  // Отдельные группы техники — это тоже группы 16А, поэтому они идут в зачёт.
+  const dedicated16 =
+    outletBackedDedicatedCount(circuits) +
+    (circuits.warmFloor ?? 0) +
+    (circuits.leakSensor ?? 0);
+  const target = Math.round(rooms.length * rules.socketGroupsPerRoom) - dedicated16;
+
+  const candidates = rooms
+    .map((room, index) => ({ room, index }))
+    .filter(({ room }) => room.kind !== "kitchen" && room.outlets > 0);
+  if (!candidates.length) return legs;
+
+  let total = legs.reduce((sum, n) => sum + n, 0);
+  for (let i = 0; total < target; i += 1) {
+    legs[candidates[i % candidates.length].index] += 1;
+    total += 1;
+  }
+  return legs;
+}
+
+/**
  * Приводит проект к набору отдельных групп. Тёплый пол исторически задавался
  * полем warmFloorCircuits, поэтому подхватываем и его.
  */
@@ -254,7 +294,9 @@ export function estimateCableRoute(
   let socketLegCount = 0;
   let lightLegCount = 0;
 
-  for (const room of rooms) {
+  const legsPerRoom = socketLegsPerRoom(rooms, circuits, rules);
+
+  for (const [roomIndex, room] of rooms.entries()) {
     const perimeter = roomPerimeter(room, fallbackRoomArea);
     const step = perimeter / Math.max(rules.pointsForFullLap, 1);
     const panelToBox = room.panelToBoxMeters ?? defaultPanelToRoom;
@@ -265,8 +307,7 @@ export function estimateCableRoute(
       // между собой по стенам, а к каждой розетке от коробки свой спуск.
       // Каждая розеточная линия — своя трасса от щита, поэтому кухня с её
       // несколькими группами считается по каждой линии отдельно.
-      const legCount = socketLegsForRoom(room, circuits, rules);
-      const perLeg = spread(room.outlets, legCount).filter((n) => n > 0);
+      const perLeg = spread(room.outlets, legsPerRoom[roomIndex]).filter((n) => n > 0);
 
       for (const [index, outlets] of perLeg.entries()) {
         const { blocks, meters: drops } = blockDrops(outlets, drop, rules);

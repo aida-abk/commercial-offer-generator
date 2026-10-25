@@ -50,6 +50,7 @@ const DEFAULT_ROUTING: CableRoutingRules = {
   socketsPerDrop: 4,
   blockJumpMeters: 0.4,
   kitchenSocketGroups: 4,
+  socketGroupsPerRoom: 2.5,
   twoWaySwitchRoomKinds: ["corridor", "bedroom"],
   defaultCeilingHeightMeters: 2.7,
   panelToRoomBaseMeters: 2,
@@ -334,7 +335,10 @@ function computeQuantities(project: ExtractedProject) {
   // На трёхфазном вводе ставят по реле контроля напряжения на каждую фазу.
   const threePhase = project.threePhase === true;
   let voltageRelayQty = threePhase ? 3 : 1;
-  let terminalBlockCount = panelSize.terminalBlocks ?? 4;
+  // Колодки РБД в строках сметы приходят из набора бренда; здесь хранится
+  // только переопределение для больших проектов. Для арифметики модулей
+  // используется типовое число из правил.
+  let terminalBlockCount = 0;
   let resolvedRcdCount = rcdCount;
   let largePanelModules: string | undefined;
 
@@ -371,7 +375,7 @@ function computeQuantities(project: ExtractedProject) {
       rcd: resolvedRcdCount,
       contactor: 1,
       voltageRelay: voltageRelayQty,
-      terminalBlocks: terminalBlockCount,
+      terminalBlocks: terminalBlockCount || (panelSize.terminalBlocks ?? 4),
       busBars: panelSize.busBars ?? 2,
       threePhase,
     },

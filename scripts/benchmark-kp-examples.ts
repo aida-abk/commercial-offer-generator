@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { calculateOffer } from "../src/lib/calculator";
+import { loadCalculationRules } from "../src/lib/catalog";
 import type { ExtractedProject, PanelBrandId } from "../src/lib/types";
 
 interface KpFixture {
@@ -19,17 +20,31 @@ interface KpFixture {
 // Отдельные группы восстановлены по самим КП: строка кабеля 3*6 есть у всех
 // квартир и означает варочную поверхность. В офисе такой строки нет — и группы
 // варочной поверхности там тоже нет. Остальной набор техники для квартиры типовой.
+//
+// Число помещений взято из самих КП: инженеры ставят один автомат 10А на
+// комнату, поэтому их количество в щите и есть число помещений.
+//
+// Точки приведены к той же договорённости, что и в стенде по метрам
+// (scripts/benchmark-cable-routing.ts): подрозетники берутся из КП, выключателей
+// 15% от них, точек UTP одна-три, световых точек 0,55 на м². «Лампочки» в КП —
+// это временный свет на время монтажа, а не софиты с чертежа, поэтому брать их
+// как световые точки нельзя.
+//
+// Работы сравнивать не с чем: инженеры подняли цену по умолчанию до 7000 ₸/м²,
+// а суммы в готовых КП считались примерно по 6500 ₸/м². Расхождение по строке
+// работ ожидаемо и в итог по сумме заложено.
 const FIXTURES: KpFixture[] = [
   {
     name: "ЖК Aididar",
     project: {
       projectName: "ЖК Aididar",
       totalAreaSqM: 90,
+      roomCount: 5,
       dedicatedCircuits: { fridge: 1, hob: 1, ovenMicrowave: 1, airConditioners: 1 },
-      outlets: 55,
-      switches: 25,
-      lightPoints: 13,
-      utpPoints: 4,
+      outlets: 62,
+      switches: 11,
+      lightPoints: 50,
+      utpPoints: 2,
       warmFloorCircuits: 0,
       notes: [],
     },
@@ -40,11 +55,12 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "ЖК Shabyt",
       totalAreaSqM: 100,
+      roomCount: 5,
       dedicatedCircuits: { fridge: 1, hob: 1, ovenMicrowave: 1, airConditioners: 2 },
-      outlets: 65,
-      switches: 30,
-      lightPoints: 15,
-      utpPoints: 5,
+      outlets: 62,
+      switches: 11,
+      lightPoints: 55,
+      utpPoints: 2,
       warmFloorCircuits: 0,
       notes: [],
     },
@@ -55,11 +71,12 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "ЖК Tansu",
       totalAreaSqM: 70,
+      roomCount: 5,
       dedicatedCircuits: { fridge: 1, hob: 1, ovenMicrowave: 1, airConditioners: 1 },
-      outlets: 45,
-      switches: 20,
-      lightPoints: 10,
-      utpPoints: 3,
+      outlets: 53,
+      switches: 10,
+      lightPoints: 39,
+      utpPoints: 2,
       warmFloorCircuits: 0,
       notes: [],
     },
@@ -70,11 +87,12 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "Офис",
       totalAreaSqM: 120,
+      roomCount: 5,
       dedicatedCircuits: {},
-      outlets: 55,
-      switches: 25,
-      lightPoints: 13,
-      utpPoints: 8,
+      outlets: 49,
+      switches: 9,
+      lightPoints: 66,
+      utpPoints: 2,
       warmFloorCircuits: 0,
       notes: [],
     },
@@ -85,10 +103,11 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "ЖK Республика",
       totalAreaSqM: 32,
+      roomCount: 3,
       dedicatedCircuits: { fridge: 1, hob: 1, ovenMicrowave: 1 },
-      outlets: 24,
-      switches: 14,
-      lightPoints: 8,
+      outlets: 32,
+      switches: 6,
+      lightPoints: 18,
       utpPoints: 2,
       warmFloorCircuits: 0,
       notes: [],
@@ -102,11 +121,12 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "ЖК VIVALDI",
       totalAreaSqM: 110,
+      roomCount: 8,
       dedicatedCircuits: { fridge: 1, freezer: 1, hob: 1, ovenMicrowave: 1, airConditioners: 2 },
-      outlets: 80,
-      switches: 35,
-      lightPoints: 18,
-      utpPoints: 6,
+      outlets: 78,
+      switches: 14,
+      lightPoints: 61,
+      utpPoints: 3,
       warmFloorCircuits: 0,
       notes: [],
     },
@@ -121,11 +141,12 @@ const FIXTURES: KpFixture[] = [
     project: {
       projectName: "ЖК София",
       totalAreaSqM: 86,
+      roomCount: 5,
       dedicatedCircuits: { fridge: 1, hob: 1, ovenMicrowave: 1, airConditioners: 1, warmFloor: 1 },
-      outlets: 50,
-      switches: 25,
-      lightPoints: 15,
-      utpPoints: 4,
+      outlets: 53,
+      switches: 10,
+      lightPoints: 47,
+      utpPoints: 2,
       warmFloorCircuits: 1,
       notes: [],
     },
@@ -144,7 +165,12 @@ function sumSection(items: { total: number }[]): number {
 }
 
 console.log("=== Benchmark: calculator vs «Примеры КП» ===\n");
-console.log("Labor: 6500 ₸/m², округление до 10 000 ₸\n");
+const laborRules = loadCalculationRules();
+console.log(
+  `Работы: ${laborRules.laborPerSqM} ₸/м², округление до ${laborRules.laborRoundTo} ₸. ` +
+    "В готовых КП работы считались примерно по 6500 ₸/м², поэтому строка работ и " +
+    "итог по сумме заведомо расходятся.\n",
+);
 
 const rows: {
   name: string;

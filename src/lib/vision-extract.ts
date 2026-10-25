@@ -8,6 +8,8 @@ const EXTRACTION_SCHEMA = `{
   "totalAreaSqM": number,
   "ceilingHeightMeters": number,
   "panelLocation": "string — где стоит электрощит, например «у входа в квартиру»",
+  "threePhase": boolean — трёхфазный ввод 380 В (вводной автомат на четыре полюса),
+  "roomCount": number — сколько всего помещений, считая санузлы и балконы,
   "outlets": number,
   "switches": number,
   "lightPoints": number,
@@ -63,6 +65,13 @@ const ROUTING_RULES = `КАК СЧИТАЕТСЯ ДЛИНА КАБЕЛЯ (по �
 один при входе, второй у изголовья кровати. Реже с трёх мест. Отметь такие
 помещения через kind (corridor, bedroom) — система добавит на них кабель.
 
+Обязательно посчитай все помещения и укажи roomCount, даже если разбивку точек
+по комнатам снять не удалось: от числа помещений зависит и число групп в щите,
+и длина трасс. Считай все помещения, включая санузлы, кладовые и балконы.
+
+Отметь threePhase, если ввод трёхфазный: на схеме щита это вводной автомат на
+четыре полюса, напряжение 380 В и три реле контроля напряжения.
+
 Поэтому для каждого помещения важно снять с чертежа:
 - габариты (widthMeters x lengthMeters) или площадь;
 - panelToBoxMeters — трассу от щита до распределительной коробки помещения,
@@ -109,6 +118,8 @@ function parseExtractedJson(raw: string): ExtractedProject {
     totalAreaSqM: Number(parsed.totalAreaSqM) || 0,
     ceilingHeightMeters: positiveOrUndefined(parsed.ceilingHeightMeters),
     panelLocation: parsed.panelLocation,
+    threePhase: parsed.threePhase === true,
+    roomCount: positiveOrUndefined(parsed.roomCount),
     outlets: Number(parsed.outlets) || 0,
     switches: Number(parsed.switches) || 0,
     lightPoints: Number(parsed.lightPoints) || 0,
